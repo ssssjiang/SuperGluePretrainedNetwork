@@ -319,7 +319,7 @@ if __name__ == '__main__':
             matching_score = num_correct / len(kpts0) if len(kpts0) > 0 else 0
 
             thresh = 1.  # In pixels relative to resized image size.
-            ret = estimate_pose(mkpts0, mkpts1, K0, K1, thresh)
+            ret = estimate_pose(mkpts0, mkpts1, K0, K1, thresh, conf=mconf)
             if ret is None:
                 err_t, err_R = np.inf, np.inf
             else:
@@ -376,6 +376,7 @@ if __name__ == '__main__':
                 'SuperGlue',
                 '{}R: {}'.format(delta, e_R), '{}t: {}'.format(delta, e_t),
                 'inliers: {}/{}'.format(num_correct, (matches > -1).sum()),
+                't: {:.2f}'.format(np.linalg.norm(T_0to1[:3, 3])),
             ]
             if rot0 != 0 or rot1 != 0:
                 text.append('Rotation: {}:{}'.format(rot0, rot1))

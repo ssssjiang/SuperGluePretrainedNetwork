@@ -284,8 +284,29 @@ def read_image(path, device, resize, rotation, resize_float):
 
 # --- GEOMETRY ---
 
+def weighted_8pt(p0, p1, weights):
+    idx = np.argsort(weights)[::-1][:len(weights)//10]
+    weights = weights[idx]
+    p0 = p0[idx]
+    p1 = p1[idx]
+    X = np.stack([
+        p1[:, 0] * p0[:, 0],
+        p1[:, 0] * p0[:, 1],
+        p1[:, 0],
+        p1[:, 1] * p0[:, 0],
+        p1[:, 1] * p0[:, 1],
+        p1[:, 1],
+        p0[:, 0],
+        p0[:, 1],
+        np.ones_like(p1[:, 0])], -1)  # N x 9
+    XwX = X.T @ (X * weights[:, None])
+    s, v = np.linalg.eig(XwX)
+    e = v[:, np.argmin(s)]
+    e = e / np.linalg.norm(e)
+    return e.reshape(3, 3)
 
-def estimate_pose(kpts0, kpts1, K0, K1, thresh, conf=0.99999):
+
+def estimate_pose(kpts0, kpts1, K0, K1, thresh, prob=0.99999, conf=None):
     if len(kpts0) < 5:
         return None
 
@@ -296,8 +317,11 @@ def estimate_pose(kpts0, kpts1, K0, K1, thresh, conf=0.99999):
     kpts1 = (kpts1 - K1[[0, 1], [2, 2]][None]) / K1[[0, 1], [0, 1]][None]
 
     E, mask = cv2.findEssentialMat(
-        kpts0, kpts1, np.eye(3), threshold=norm_thresh, prob=conf,
+        kpts0, kpts1, np.eye(3), threshold=norm_thresh, prob=prob,
         method=cv2.RANSAC)
+    # E = weighted_8pt(kpts0, kpts1, conf).astype(np.float64)
+    # mask = np.ones((len(conf), 1), np.uint8)
+    # assert False, (E.dtype, mask.dtype, E.shape, mask.shape)
 
     assert E is not None
 
