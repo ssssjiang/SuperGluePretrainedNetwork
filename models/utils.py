@@ -237,11 +237,14 @@ class VideoStreamer:
 
 # --- PREPROCESSING ---
 
-def process_resize(w, h, resize):
+def process_resize(w, h, resize, resize_force=True):
     assert(len(resize) > 0 and len(resize) <= 2)
     if len(resize) == 1 and resize[0] > -1:
-        scale = resize[0] / max(h, w)
-        w_new, h_new = int(round(w*scale)), int(round(h*scale))
+        if resize[0] < max(h, w) or resize_force:
+            scale = resize[0] / max(h, w)
+            w_new, h_new = int(round(w*scale)), int(round(h*scale))
+        else:
+            w_new, h_new = w, h
     elif len(resize) == 1 and resize[0] == -1:
         w_new, h_new = w, h
     else:  # len(resize) == 2:
@@ -260,18 +263,21 @@ def frame2tensor(frame, device):
     return torch.from_numpy(frame/255.).float()[None, None].to(device)
 
 
-def read_image(path, device, resize, rotation, resize_float):
+def read_image(path, device, resize, rotation, resize_float,
+               resize_force=True, interp=cv2.INTER_LINEAR):
     image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     if image is None:
         return None, None, None
     w, h = image.shape[1], image.shape[0]
-    w_new, h_new = process_resize(w, h, resize)
+    w_new, h_new = process_resize(w, h, resize, resize_force)
     scales = (float(w) / float(w_new), float(h) / float(h_new))
 
     if resize_float:
-        image = cv2.resize(image.astype('float32'), (w_new, h_new))
+        image = cv2.resize(image.astype('float32'), (w_new, h_new),
+                           interpolation=interp)
     else:
-        image = cv2.resize(image, (w_new, h_new)).astype('float32')
+        image = cv2.resize(image, (w_new, h_new), interpolation=interp).astype(
+                'float32')
 
     if rotation != 0:
         image = np.rot90(image, k=rotation)
