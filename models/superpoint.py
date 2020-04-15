@@ -77,6 +77,24 @@ def top_k_keypoints(keypoints, scores, k: int):
     return keypoints[indices], scores
 
 
+def soft_argmax_refinement(keypoints, scores, radius: int):
+    width = 2*radius + 1
+    sum_ = torch.nn.functional.avg_pool2d(
+            scores[:, None], width, 1, radius, divisor_override=1)
+    ar = torch.arange(-radius, radius+1).to(scores)
+    kernel_x = ar[None].expand(width, -1)[None, None]
+    dx = torch.nn.functional.conv2d(
+            scores[:, None], kernel_x, padding=radius)
+    dy = torch.nn.functional.conv2d(
+            scores[:, None], kernel_x.transpose(2, 3), padding=radius)
+    dydx = torch.stack([dy[:, 0], dx[:, 0]], -1) / sum_[:, 0, :, :, None]
+    refined_keypoints = []
+    for i, kpts in enumerate(keypoints):
+        delta = dydx[i][tuple(kpts.t())]
+        refined_keypoints.append(kpts.float() + delta)
+    return refined_keypoints
+
+
 def sample_descriptors(keypoints, descriptors, s: int = 8):
     """ Interpolate descriptors at keypoint locations """
     b, c, h, w = descriptors.shape
@@ -103,6 +121,7 @@ class SuperPoint(nn.Module):
     default_config = {
         'descriptor_dim': 256,
         'nms_radius': 4,
+        'refinement_radius': 0,
         'keypoint_threshold': 0.005,
         'max_keypoints': -1,
         'remove_borders': 4,
@@ -164,6 +183,7 @@ class SuperPoint(nn.Module):
         b, _, h, w = scores.shape
         scores = scores.permute(0, 2, 3, 1).reshape(b, h, w, 8, 8)
         scores = scores.permute(0, 1, 3, 2, 4).reshape(b, h*8, w*8)
+        full_scores = scores
         scores = simple_nms(scores, self.config['nms_radius'])
 
         # Extract keypoints
@@ -182,6 +202,10 @@ class SuperPoint(nn.Module):
             keypoints, scores = list(zip(*[
                 top_k_keypoints(k, s, self.config['max_keypoints'])
                 for k, s in zip(keypoints, scores)]))
+
+        if self.config['refinement_radius'] > 0:
+            keypoints = soft_argmax_refinement(
+                keypoints, full_scores, self.config['refinement_radius'])
 
         # Convert (h, w) to (x, y)
         keypoints = [torch.flip(k, [1]).float() for k in keypoints]
