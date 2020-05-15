@@ -11,7 +11,8 @@ def find_nn(sim, ratio_thresh, distance_thresh):
     if distance_thresh:
         mask = mask & (dist_nn[..., 0] <= distance_thresh**2)
     matches = torch.where(mask, ind_nn[..., 0], ind_nn.new_tensor(-1))
-    return matches
+    scores = torch.where(mask, (sim_nn[..., 0]+1)/2, sim_nn.new_tensor(0))
+    return matches, scores
 
 
 def mutual_check(m0, m1):
@@ -37,9 +38,9 @@ class NearestNeighborMatcher(nn.Module):
     def forward(self, data):
         sim = torch.einsum(
             'bdn,bdm->bnm', data['descriptors0'], data['descriptors1'])
-        matches0 = find_nn(
+        matches0, scores0 = find_nn(
             sim, self.config['ratio_thresh'], self.config['distance_thresh'])
-        matches1 = find_nn(
+        matches1, scores1 = find_nn(
             sim.transpose(1, 2), self.config['ratio_thresh'],
             self.config['distance_thresh'])
         if self.config['mutual_check']:
@@ -47,4 +48,6 @@ class NearestNeighborMatcher(nn.Module):
         return {
             'matches0': matches0,
             'matches1': matches1,
+            'matching_scores0': scores0,
+            'matching_scores1': scores1,
         }

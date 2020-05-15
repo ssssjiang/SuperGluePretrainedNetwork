@@ -110,6 +110,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--match_threshold', type=float, default=0.2,
         help='SuperGlue match threshold')
+    parser.add_argument(
+        '--do_nn_matching', action='store_true')
 
     parser.add_argument(
         '--viz', action='store_true',
@@ -118,6 +120,8 @@ if __name__ == '__main__':
         '--eval', action='store_true',
         help='Perform the evaluation'
              ' (requires ground truth pose and intrinsics)')
+    parser.add_argument(
+        '--use_pycolmap', action='store_true')
     parser.add_argument(
         '--fast_viz', action='store_true',
         help='Use faster image visualization with OpenCV instead of Matplotlib')
@@ -179,6 +183,7 @@ if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() and not opt.force_cpu else 'cpu'
     print('Running inference on device \"{}\"'.format(device))
     config = {
+        'use_nn_matcher': opt.do_nn_matching,
         'superpoint': {
             'nms_radius': opt.nms_radius,
             'keypoint_threshold': opt.keypoint_threshold,
@@ -188,7 +193,11 @@ if __name__ == '__main__':
             'weights': opt.superglue,
             'sinkhorn_iterations': opt.sinkhorn_iterations,
             'match_threshold': opt.match_threshold,
-        }
+        },
+        'nn': {
+            'distance_thresh': 0.7,
+            'mutual_check': False,
+        },
     }
     matching = Matching(config).eval().to(device)
 
@@ -319,12 +328,17 @@ if __name__ == '__main__':
             matching_score = num_correct / len(kpts0) if len(kpts0) > 0 else 0
 
             thresh = 1.  # In pixels relative to resized image size.
-            ret = estimate_pose(mkpts0, mkpts1, K0, K1, thresh, conf=mconf)
+            ret = estimate_pose(mkpts0, mkpts1, K0, K1, thresh, conf=mconf,
+                                do_pycolmap=opt.use_pycolmap)
             if ret is None:
                 err_t, err_R = np.inf, np.inf
+                inliers = np.zeros(len(mkpts0), np.bool)
             else:
                 R, t, inliers = ret
                 err_t, err_R = compute_pose_error(T_0to1, R, t)
+                # T_pred = np.eye(4)
+                # T_pred[:3, :3], T_pred[:3, 3] = R, t
+                # epi_errs = compute_epipolar_error(mkpts0, mkpts1, T_pred, K0, K1)
 
             # Write the evaluation results to disk.
             out_eval = {'error_t': err_t,
@@ -348,11 +362,11 @@ if __name__ == '__main__':
                 text.append('Rotation: {}:{}'.format(rot0, rot1))
 
             # Display extra parameter info.
-            k_thresh = matching.superpoint.config['keypoint_threshold']
-            m_thresh = matching.superglue.config['match_threshold']
+            # k_thresh = matching.superpoint.config['keypoint_threshold']
+            # m_thresh = matching.superglue.config['match_threshold']
             small_text = [
-                'Keypoint Threshold: {:.4f}'.format(k_thresh),
-                'Match Threshold: {:.2f}'.format(m_thresh),
+                # 'Keypoint Threshold: {:.4f}'.format(k_thresh),
+                # 'Match Threshold: {:.2f}'.format(m_thresh),
                 'Image Pair: {}:{}'.format(stem0, stem1),
             ]
 
@@ -376,17 +390,17 @@ if __name__ == '__main__':
                 'SuperGlue',
                 '{}R: {}'.format(delta, e_R), '{}t: {}'.format(delta, e_t),
                 'inliers: {}/{}'.format(num_correct, (matches > -1).sum()),
-                't: {:.2f}'.format(np.linalg.norm(T_0to1[:3, 3])),
+                # 't: {:.2f}'.format(np.linalg.norm(T_0to1[:3, 3])),
             ]
             if rot0 != 0 or rot1 != 0:
                 text.append('Rotation: {}:{}'.format(rot0, rot1))
 
             # Display extra parameter info (only works with --fast_viz).
-            k_thresh = matching.superpoint.config['keypoint_threshold']
-            m_thresh = matching.superglue.config['match_threshold']
+            # k_thresh = matching.superpoint.config['keypoint_threshold']
+            # m_thresh = matching.superglue.config['match_threshold']
             small_text = [
-                'Keypoint Threshold: {:.4f}'.format(k_thresh),
-                'Match Threshold: {:.2f}'.format(m_thresh),
+                # 'Keypoint Threshold: {:.4f}'.format(k_thresh),
+                # 'Match Threshold: {:.2f}'.format(m_thresh),
                 'Image Pair: {}:{}'.format(stem0, stem1),
             ]
 

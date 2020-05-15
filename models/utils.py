@@ -49,6 +49,9 @@ from threading import Thread
 import numpy as np
 import cv2
 import torch
+import pyquaternion
+import pyransac
+import pycolmap
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
@@ -134,6 +137,7 @@ class VideoStreamer:
             for j in range(1, len(image_glob)):
                 image_path = list(Path(basedir).glob(image_glob[j]))
                 self.listing = self.listing + image_path
+            # self.listing = sorted(self.listing, key=lambda x: int(str(Path(x.stem))))
             self.listing.sort()
             self.listing = self.listing[::self.skip]
             self.max_length = np.min([self.max_length, len(self.listing)])
@@ -312,23 +316,37 @@ def weighted_8pt(p0, p1, weights):
     return e.reshape(3, 3)
 
 
-def estimate_pose(kpts0, kpts1, K0, K1, thresh, prob=0.99999, conf=None):
-    if len(kpts0) < 5:
+def estimate_pose(kpts0, kpts1, K0, K1, thresh, prob=0.99999, conf=None,
+                  do_F_degensac=False, do_pycolmap=False):
+    if (not do_F_degensac and len(kpts0) < 5) or (len(kpts0) < 7):
         return None
 
-    f_mean = np.mean([K0[0, 0], K1[1, 1], K0[0, 0], K1[1, 1]])
-    norm_thresh = thresh / f_mean
-
-    kpts0 = (kpts0 - K0[[0, 1], [2, 2]][None]) / K0[[0, 1], [0, 1]][None]
-    kpts1 = (kpts1 - K1[[0, 1], [2, 2]][None]) / K1[[0, 1], [0, 1]][None]
-
-    E, mask = cv2.findEssentialMat(
-        kpts0, kpts1, np.eye(3), threshold=norm_thresh, prob=prob,
-        method=cv2.RANSAC)
-    # E = weighted_8pt(kpts0, kpts1, conf).astype(np.float64)
-    # mask = np.ones((len(conf), 1), np.uint8)
-    # assert False, (E.dtype, mask.dtype, E.shape, mask.shape)
-
+    if do_pycolmap:
+        print('Using pycolmap')
+        cd0 = {
+            'model': 'SIMPLE_PINHOLE', 'width': 640, 'height': 480,
+            'params': [K0[0, 0], K0[0, 2], K0[1, 2]]}
+        cd1 = {
+            'model': 'SIMPLE_PINHOLE', 'width': 640, 'height': 480,
+            'params': [K1[0, 0], K1[0, 2], K1[1, 2]]}
+        ret = pycolmap.essential_matrix_estimation(kpts0, kpts1, cd0, cd1, thresh)
+        R = pyquaternion.Quaternion(ret['qvec']).rotation_matrix
+        ret = (R, ret['tvec'], np.array(ret['inliers'])) if ret['success'] else None
+        return ret
+    elif do_F_degensac:
+        F, mask = pyransac.findFundamentalMatrix(kpts0.astype(np.float64), kpts1.astype(np.float64), thresh)
+        mask = mask.astype(np.uint8)
+        E = K1.T @ F @ K0
+    else:
+        f_mean = np.mean([K0[0, 0], K1[1, 1], K0[0, 0], K1[1, 1]])
+        norm_thresh = thresh / f_mean
+        kpts0 = (kpts0 - K0[[0, 1], [2, 2]][None]) / K0[[0, 1], [0, 1]][None]
+        kpts1 = (kpts1 - K1[[0, 1], [2, 2]][None]) / K1[[0, 1], [0, 1]][None]
+        E, mask = cv2.findEssentialMat(
+            kpts0, kpts1, np.eye(3), threshold=norm_thresh, prob=prob,
+            method=cv2.RANSAC)
+        # E = weighted_8pt(kpts0, kpts1, conf).astype(np.float64)
+        # mask = np.ones((len(conf), 1), np.uint8)
     assert E is not None
 
     best_num_inliers = 0
@@ -442,11 +460,16 @@ def pose_auc(errors, thresholds):
 # --- VISUALIZATION ---
 
 
-def plot_image_pair(imgs, dpi=100, size=6, pad=.5):
+def plot_image_pair(imgs, dpi=100, size=6, pad=.5, vertical=True):
     n = len(imgs)
     assert n == 2, 'number of images must be two'
-    figsize = (size*n, size*3/4) if size is not None else None
-    _, ax = plt.subplots(1, n, figsize=figsize, dpi=dpi)
+    if vertical:
+        figsize = (size, size*3/4*n) if size is not None else None
+        layout = (n, 1)
+    else:
+        figsize = (size*n, size*3/4) if size is not None else None
+        layout = (1, n)
+    _, ax = plt.subplots(*layout, figsize=figsize, dpi=dpi)
     for i in range(n):
         ax[i].imshow(imgs[i], cmap=plt.get_cmap('gray'), vmin=0, vmax=255)
         ax[i].get_yaxis().set_ticks([])
@@ -462,7 +485,7 @@ def plot_keypoints(kpts0, kpts1, color='w', ps=2):
     ax[1].scatter(kpts1[:, 0], kpts1[:, 1], c=color, s=ps)
 
 
-def plot_matches(kpts0, kpts1, color, lw=1.5, ps=4):
+def plot_matches(kpts0, kpts1, color, lw=1.5, ps=4, lalpha=1.):
     fig = plt.gcf()
     ax = fig.axes
     fig.canvas.draw()
@@ -471,18 +494,22 @@ def plot_matches(kpts0, kpts1, color, lw=1.5, ps=4):
     fkpts0 = transFigure.transform(ax[0].transData.transform(kpts0))
     fkpts1 = transFigure.transform(ax[1].transData.transform(kpts1))
 
-    fig.lines = [matplotlib.lines.Line2D(
-        (fkpts0[i, 0], fkpts1[i, 0]), (fkpts0[i, 1], fkpts1[i, 1]), zorder=1,
-        transform=fig.transFigure, c=color[i], linewidth=lw)
-                 for i in range(len(kpts0))]
-    ax[0].scatter(kpts0[:, 0], kpts0[:, 1], c=color, s=ps)
-    ax[1].scatter(kpts1[:, 0], kpts1[:, 1], c=color, s=ps)
+    if lw > 0:
+        fig.lines = [matplotlib.lines.Line2D(
+            (fkpts0[i, 0], fkpts1[i, 0]), (fkpts0[i, 1], fkpts1[i, 1]),
+            zorder=1, transform=fig.transFigure, c=color[i], linewidth=lw,
+            alpha=lalpha)
+                     for i in range(len(kpts0))]
+    if ps > 0:
+        ax[0].scatter(kpts0[:, 0], kpts0[:, 1], c=color, s=ps)
+        ax[1].scatter(kpts1[:, 0], kpts1[:, 1], c=color, s=ps)
 
 
 def make_matching_plot(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
                        color, text, path, show_keypoints=False,
                        fast_viz=False, opencv_display=False,
-                       opencv_title='matches', small_text=[]):
+                       opencv_title='matches', small_text=[], lw=1.5, psm=4,
+                       lalpha=1.):
 
     if fast_viz:
         make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
@@ -494,7 +521,7 @@ def make_matching_plot(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
     if show_keypoints:
         plot_keypoints(kpts0, kpts1, color='k', ps=4)
         plot_keypoints(kpts0, kpts1, color='w', ps=2)
-    plot_matches(mkpts0, mkpts1, color)
+    plot_matches(mkpts0, mkpts1, color, lw=lw, ps=psm, lalpha=lalpha)
 
     fig = plt.gcf()
     txt_color = 'k' if image0[:100, :150].mean() > 200 else 'w'

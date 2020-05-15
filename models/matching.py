@@ -44,6 +44,7 @@ import torch
 
 from .superpoint import SuperPoint
 from .superglue import SuperGlue
+from .nearest_neighbor_matcher import NearestNeighborMatcher
 
 
 class Matching(torch.nn.Module):
@@ -51,7 +52,10 @@ class Matching(torch.nn.Module):
     def __init__(self, config={}):
         super().__init__()
         self.superpoint = SuperPoint(config.get('superpoint', {}))
-        self.superglue = SuperGlue(config.get('superglue', {}))
+        if config.get('use_nn_matcher', False):
+            self.matcher = NearestNeighborMatcher(config.get('nn', {}))
+        else:
+            self.matcher = SuperGlue(config.get('superglue', {}))
 
     def forward(self, data):
         """ Run SuperPoint (optionally) and SuperGlue
@@ -79,6 +83,6 @@ class Matching(torch.nn.Module):
                 data[k] = torch.stack(data[k])
 
         # Perform the matching
-        pred = {**pred, **self.superglue(data)}
+        pred = {**pred, **self.matcher(data)}
 
         return pred
