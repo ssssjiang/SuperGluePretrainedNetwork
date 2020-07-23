@@ -95,6 +95,47 @@ def soft_argmax_refinement(keypoints, scores, radius: int):
     return refined_keypoints
 
 
+def quadratic_refinement(keypoints, scores):
+    di_filter = torch.tensor(
+        [[0, -0.5, 0], [0, 0, 0], [0,  0.5, 0]]).view(1, 1, 3, 3)
+    dj_filter = torch.tensor(
+        [[0, 0, 0], [-0.5, 0, 0.5], [0, 0, 0]]).view(1, 1, 3, 3)
+
+    dii_filter = torch.tensor(
+        [[0, 1., 0], [0, -2., 0], [0, 1., 0]]).view(1, 1, 3, 3)
+    dij_filter = 0.25 * torch.tensor(
+        [[1., 0, -1.], [0, 0., 0], [-1., 0, 1.]]).view(1, 1, 3, 3)
+    djj_filter = torch.tensor(
+        [[0, 0, 0], [1., -2., 1.], [0, 0, 0]]).view(1, 1, 3, 3)
+
+    scores = scores[:, None]  # B x 1 x H x W
+    dii = torch.nn.functional.conv2d(scores, dii_filter.to(scores), padding=1)
+    dij = torch.nn.functional.conv2d(scores, dij_filter.to(scores), padding=1)
+    djj = torch.nn.functional.conv2d(scores, djj_filter.to(scores), padding=1)
+    det = dii * djj - dij * dij
+
+    inv_hess_00 = djj / det
+    inv_hess_01 = -dij / det
+    inv_hess_11 = dii / det
+
+    di = torch.nn.functional.conv2d(scores, di_filter.to(scores), padding=1)
+    dj = torch.nn.functional.conv2d(scores, dj_filter.to(scores), padding=1)
+
+    delta_i = -(inv_hess_00 * di + inv_hess_01 * dj)
+    delta_j = -(inv_hess_01 * di + inv_hess_11 * dj)
+    delta = torch.stack([delta_i, delta_j], -1)[:, 0]  # B x H x W x 2
+    valid = torch.all(delta.abs() < 0.5, -1)
+    delta = torch.where(
+        valid[..., None].expand_as(delta), delta, delta.new_zeros(1))
+
+    refined_keypoints = []
+    for i, kpts in enumerate(keypoints):
+        delta = delta[i][tuple(kpts.t())]
+        print(torch.all(delta == 0., -1).float().mean().item())
+        refined_keypoints.append(kpts.float() + delta)
+    return refined_keypoints
+
+
 def sample_descriptors(keypoints, descriptors, s: int = 8):
     """ Interpolate descriptors at keypoint locations """
     b, c, h, w = descriptors.shape
@@ -122,6 +163,7 @@ class SuperPoint(nn.Module):
         'descriptor_dim': 256,
         'nms_radius': 4,
         'refinement_radius': 0,
+        'do_quadratic_refinement': 0,
         'keypoint_threshold': 0.005,
         'max_keypoints': -1,
         'remove_borders': 4,
@@ -203,7 +245,9 @@ class SuperPoint(nn.Module):
                 top_k_keypoints(k, s, self.config['max_keypoints'])
                 for k, s in zip(keypoints, scores)]))
 
-        if self.config['refinement_radius'] > 0:
+        if self.config['do_quadratic_refinement']:
+            keypoints = quadratic_refinement(keypoints, full_scores)
+        elif self.config['refinement_radius'] > 0:
             keypoints = soft_argmax_refinement(
                 keypoints, full_scores, self.config['refinement_radius'])
 
