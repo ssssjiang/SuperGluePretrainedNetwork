@@ -148,7 +148,7 @@ if __name__ == '__main__':
                                   matches_path)
 
                 kpts0, kpts1 = results['keypoints0'], results['keypoints1']
-                matches, conf = results['matches'], results['match_confidence']
+                matches = results['matches']
                 do_match = False
             if opt.eval and eval_path.exists():
                 try:
@@ -199,7 +199,7 @@ if __name__ == '__main__':
 
             # Write the matches to disk.
             out_matches = {'keypoints0': kpts0, 'keypoints1': kpts1,
-                           'matches': raw_matches}
+                           'matches': matches}
             np.savez(str(matches_path), **out_matches)
 
         # Keep the matching keypoints.
