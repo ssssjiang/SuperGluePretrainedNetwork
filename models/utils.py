@@ -46,12 +46,17 @@ from pathlib import Path
 import time
 from collections import OrderedDict
 from threading import Thread
+import math
 import numpy as np
 import cv2
 import torch
 import matplotlib.pyplot as plt
 import matplotlib
+
 matplotlib.use('Agg')
+
+# epsilon for testing whether a number is close to zero
+_EPS = np.finfo(float).eps * 4.0
 
 
 class AverageTimer:
@@ -88,7 +93,7 @@ class AverageTimer:
             if self.will_print[key]:
                 print('%s=%.3f' % (key, val), end=' ')
                 total += val
-        print('total=%.3f sec {%.1f FPS}' % (total, 1./total), end=' ')
+        print('total=%.3f sec {%.1f FPS}' % (total, 1. / total), end=' ')
         if self.newline:
             print(flush=True)
         else:
@@ -103,6 +108,7 @@ class VideoStreamer:
         3.) A directory of images (files in directory matching 'image_glob').
         4.) A video file, such as an .mp4 or .avi file.
     """
+
     def __init__(self, basedir, resize, skip, image_glob, max_length=1000000):
         self._ip_grabbed = False
         self._ip_running = False
@@ -184,7 +190,7 @@ class VideoStreamer:
         if self.camera:
 
             if self._ip_camera:
-                #Wait for first image, making sure we haven't exited
+                # Wait for first image, making sure we haven't exited
                 while self._ip_grabbed is False and self._ip_exited is False:
                     time.sleep(.001)
 
@@ -229,19 +235,19 @@ class VideoStreamer:
             self._ip_image = img
             self._ip_grabbed = ret
             self._ip_index += 1
-            #print('IPCAMERA THREAD got frame {}'.format(self._ip_index))
-
+            # print('IPCAMERA THREAD got frame {}'.format(self._ip_index))
 
     def cleanup(self):
         self._ip_running = False
 
+
 # --- PREPROCESSING ---
 
 def process_resize(w, h, resize):
-    assert(len(resize) > 0 and len(resize) <= 2)
+    assert (len(resize) > 0 and len(resize) <= 2)
     if len(resize) == 1 and resize[0] > -1:
         scale = resize[0] / max(h, w)
-        w_new, h_new = int(round(w*scale)), int(round(h*scale))
+        w_new, h_new = int(round(w * scale)), int(round(h * scale))
     elif len(resize) == 1 and resize[0] == -1:
         w_new, h_new = w, h
     else:  # len(resize) == 2:
@@ -255,9 +261,20 @@ def process_resize(w, h, resize):
 
     return w_new, h_new
 
+def process_crop(image_raw, w, h, crop):
+    if len(crop) == 1 or crop is None:
+        return image_raw, w, h
+
+    w_crop, h_crop = crop[2], crop[3]
+    if len(crop) == 4 and (crop[0] + w_crop > w or crop[1] + h_crop > h):
+        raise ValueError('Cannot crop size more than raw image size.')
+
+    # cv2.Mat slip
+    cropped_image = image_raw[crop[1]: crop[1] + crop[3], crop[0]: crop[0] + crop[2]]
+    return cropped_image, w_crop, h_crop
 
 def frame2tensor(frame, device):
-    return torch.from_numpy(frame/255.).float()[None, None].to(device)
+    return torch.from_numpy(frame / 255.).float()[None, None].to(device)
 
 
 def read_image(path, device, resize, rotation, resize_float):
@@ -281,11 +298,78 @@ def read_image(path, device, resize, rotation, resize_float):
     inp = frame2tensor(image, device)
     return image, inp, scales
 
+def read_image2(path, device, rotation, crop):
+    image_raw = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if image_raw is None:
+        return None, None, None
+    w_raw, h_raw = image_raw.shape[1], image_raw.shape[0]
+    image, w, h = process_crop(image_raw, w_raw, h_raw, crop)
+
+    if rotation != 0:
+        image = np.rot90(image, k=rotation)
+
+    inp = frame2tensor(image, device)
+    return image_raw, inp
 
 # --- GEOMETRY ---
 
+def quaternion_matrix(quaternion):
+    """Return homogeneous rotation matrix from quaternion.
 
-def estimate_pose(kpts0, kpts1, K0, K1, thresh, conf=0.99999):
+    >>> M = quaternion_matrix([0.99810947, 0.06146124, 0, 0])
+    >>> np.allclose(M, rotation_matrix(0.123, [1, 0, 0]))
+    True
+    >>> M = quaternion_matrix([1, 0, 0, 0])
+    >>> np.allclose(M, np.identity(4))
+    True
+    >>> M = quaternion_matrix([0, 1, 0, 0])
+    >>> np.allclose(M, np.diag([1, -1, -1, 1]))
+    True
+
+    """
+    q = np.array(quaternion, dtype=np.float64, copy=True)
+    n = np.dot(q, q)
+    if n < _EPS:
+        return np.identity(4)
+    q *= math.sqrt(2.0 / n)
+    q = np.outer(q, q)
+    return np.array([
+        [1.0 - q[2, 2] - q[3, 3], q[1, 2] - q[3, 0], q[1, 3] + q[2, 0], 0.0],
+        [q[1, 2] + q[3, 0], 1.0 - q[1, 1] - q[3, 3], q[2, 3] - q[1, 0], 0.0],
+        [q[1, 3] - q[2, 0], q[2, 3] + q[1, 0], 1.0 - q[1, 1] - q[2, 2], 0.0],
+        [0.0, 0.0, 0.0, 1.0]])
+
+
+def do_ds_undistort(distort_kpts, D):
+    kpts = distort_kpts
+    for kpt in kpts:
+        xi, alpha = D[0], D[1]
+        r_2 = kpt[0] * kpt[0] + kpt[1] * kpt[1]
+        if (alpha > 0.5) and r_2 > (1.0 / (2 * alpha - 1)):
+            continue
+
+        alpha_2 = alpha * alpha
+        xi_2 = xi * xi
+        sqrt_2 = np.sqrt(1 - (2 * alpha - 1) * r_2)
+        norm_2 = alpha * sqrt_2 + 1 - alpha
+        norm2_inv = 1.0 / norm_2
+        mz = (1 - alpha_2 * r_2) * norm2_inv
+        mz_2 = mz * mz
+        norm_1 = mz_2 + r_2
+        norm1_inv = 1.0 / norm_1
+        sqrt_1 = np.sqrt(mz_2 + (1 - xi_2) * r_2)
+        k = (mz * xi + sqrt_1) * norm1_inv
+
+        p0 = k * kpt[0]
+        p1 = k * kpt[1]
+        p2 = k * mz - xi
+        kpt[0] = p0 / p2
+        kpt[1] = p1 / p2
+    return kpts
+
+
+# do undistort
+def estimate_pose(kpts0, kpts1, K0, K1, thresh, conf=0.99999, D0=None, D1=None):
     if len(kpts0) < 5:
         return None
 
@@ -295,11 +379,16 @@ def estimate_pose(kpts0, kpts1, K0, K1, thresh, conf=0.99999):
     kpts0 = (kpts0 - K0[[0, 1], [2, 2]][None]) / K0[[0, 1], [0, 1]][None]
     kpts1 = (kpts1 - K1[[0, 1], [2, 2]][None]) / K1[[0, 1], [0, 1]][None]
 
+    if D0 is not None and D1 is not None:
+        kpts0 = do_ds_undistort(kpts0, D0)
+        kpts1 = do_ds_undistort(kpts1, D1)
+
     E, mask = cv2.findEssentialMat(
         kpts0, kpts1, np.eye(3), threshold=norm_thresh, prob=conf,
         method=cv2.RANSAC)
 
-    assert E is not None
+    if E is None:
+        return None
 
     best_num_inliers = 0
     ret = None
@@ -320,14 +409,14 @@ def rotate_intrinsics(K, image_shape, rot):
     rot = rot % 4
     if rot == 1:
         return np.array([[fy, 0., cy],
-                         [0., fx, w-1-cx],
+                         [0., fx, w - 1 - cx],
                          [0., 0., 1.]], dtype=K.dtype)
     elif rot == 2:
-        return np.array([[fx, 0., w-1-cx],
-                         [0., fy, h-1-cy],
+        return np.array([[fx, 0., w - 1 - cx],
+                         [0., fy, h - 1 - cy],
                          [0., 0., 1.]], dtype=K.dtype)
     else:  # if rot == 3:
-        return np.array([[fy, 0., h-1-cy],
+        return np.array([[fy, 0., h - 1 - cy],
                          [0., fx, cx],
                          [0., 0., 1.]], dtype=K.dtype)
 
@@ -344,7 +433,7 @@ def rotate_pose_inplane(i_T_w, rot):
 
 
 def scale_intrinsics(K, scales):
-    scales = np.diag([1./scales[0], 1./scales[1], 1.])
+    scales = np.diag([1. / scales[0], 1. / scales[1], 1.])
     return np.dot(scales, K)
 
 
@@ -352,11 +441,15 @@ def to_homogeneous(points):
     return np.concatenate([points, np.ones_like(points[:, :1])], axis=-1)
 
 
-def compute_epipolar_error(kpts0, kpts1, T_0to1, K0, K1):
+def compute_epipolar_error(kpts0, kpts1, T_0to1, K0, K1, D0 = None, D1 = None):
     kpts0 = (kpts0 - K0[[0, 1], [2, 2]][None]) / K0[[0, 1], [0, 1]][None]
     kpts1 = (kpts1 - K1[[0, 1], [2, 2]][None]) / K1[[0, 1], [0, 1]][None]
-    kpts0 = to_homogeneous(kpts0)
-    kpts1 = to_homogeneous(kpts1)
+    if D0 is None or D1 is None:
+        kpts0 = to_homogeneous(kpts0)
+        kpts1 = to_homogeneous(kpts1)
+    else:
+        kpts0 = do_ds_undistort(to_homogeneous(kpts0), D0)
+        kpts1 = do_ds_undistort(to_homogeneous(kpts1), D1)
 
     t0, t1, t2 = T_0to1[:3, 3]
     t_skew = np.array([
@@ -369,8 +462,8 @@ def compute_epipolar_error(kpts0, kpts1, T_0to1, K0, K1):
     Ep0 = kpts0 @ E.T  # N x 3
     p1Ep0 = np.sum(kpts1 * Ep0, -1)  # N
     Etp1 = kpts1 @ E  # N x 3
-    d = p1Ep0**2 * (1.0 / (Ep0[:, 0]**2 + Ep0[:, 1]**2)
-                    + 1.0 / (Etp1[:, 0]**2 + Etp1[:, 1]**2))
+    d = p1Ep0 ** 2 * (1.0 / (Ep0[:, 0] ** 2 + Ep0[:, 1] ** 2)
+                      + 1.0 / (Etp1[:, 0] ** 2 + Etp1[:, 1] ** 2))
     return d
 
 
@@ -403,9 +496,9 @@ def pose_auc(errors, thresholds):
     aucs = []
     for t in thresholds:
         last_index = np.searchsorted(errors, t)
-        r = np.r_[recall[:last_index], recall[last_index-1]]
+        r = np.r_[recall[:last_index], recall[last_index - 1]]
         e = np.r_[errors[:last_index], t]
-        aucs.append(np.trapz(r, x=e)/t)
+        aucs.append(np.trapz(r, x=e) / t)
     return aucs
 
 
@@ -415,7 +508,7 @@ def pose_auc(errors, thresholds):
 def plot_image_pair(imgs, dpi=100, size=6, pad=.5):
     n = len(imgs)
     assert n == 2, 'number of images must be two'
-    figsize = (size*n, size*3/4) if size is not None else None
+    figsize = (size * n, size * 3 / 4) if size is not None else None
     _, ax = plt.subplots(1, n, figsize=figsize, dpi=dpi)
     for i in range(n):
         ax[i].imshow(imgs[i], cmap=plt.get_cmap('gray'), vmin=0, vmax=255)
@@ -444,7 +537,7 @@ def plot_matches(kpts0, kpts1, color, lw=1.5, ps=4):
     fig.lines = [matplotlib.lines.Line2D(
         (fkpts0[i, 0], fkpts1[i, 0]), (fkpts0[i, 1], fkpts1[i, 1]), zorder=1,
         transform=fig.transFigure, c=color[i], linewidth=lw)
-                 for i in range(len(kpts0))]
+        for i in range(len(kpts0))]
     ax[0].scatter(kpts0[:, 0], kpts0[:, 1], c=color, s=ps)
     ax[1].scatter(kpts1[:, 0], kpts1[:, 1], c=color, s=ps)
 
@@ -453,7 +546,6 @@ def make_matching_plot(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
                        color, text, path, show_keypoints=False,
                        fast_viz=False, opencv_display=False,
                        opencv_title='matches', small_text=[]):
-
     if fast_viz:
         make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
                                 color, text, path, show_keypoints, 10,
@@ -490,10 +582,10 @@ def make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0,
     H1, W1 = image1.shape
     H, W = max(H0, H1), W0 + W1 + margin
 
-    out = 255*np.ones((H, W), np.uint8)
+    out = 255 * np.ones((H, W), np.uint8)
     out[:H0, :W0] = image0
-    out[:H1, W0+margin:] = image1
-    out = np.stack([out]*3, -1)
+    out[:H1, W0 + margin:] = image1
+    out = np.stack([out] * 3, -1)
 
     if show_keypoints:
         kpts0, kpts1 = np.round(kpts0).astype(int), np.round(kpts1).astype(int)
@@ -509,7 +601,7 @@ def make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0,
                        lineType=cv2.LINE_AA)
 
     mkpts0, mkpts1 = np.round(mkpts0).astype(int), np.round(mkpts1).astype(int)
-    color = (np.array(color[:, :3])*255).astype(int)[:, ::-1]
+    color = (np.array(color[:, :3]) * 255).astype(int)[:, ::-1]
     for (x0, y0), (x1, y1), c in zip(mkpts0, mkpts1, color):
         c = c.tolist()
         cv2.line(out, (x0, y0), (x1 + margin + W0, y1),
@@ -527,18 +619,18 @@ def make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0,
     txt_color_fg = (255, 255, 255)
     txt_color_bg = (0, 0, 0)
     for i, t in enumerate(text):
-        cv2.putText(out, t, (int(8*sc), Ht*(i+1)), cv2.FONT_HERSHEY_DUPLEX,
-                    1.0*sc, txt_color_bg, 2, cv2.LINE_AA)
-        cv2.putText(out, t, (int(8*sc), Ht*(i+1)), cv2.FONT_HERSHEY_DUPLEX,
-                    1.0*sc, txt_color_fg, 1, cv2.LINE_AA)
+        cv2.putText(out, t, (int(8 * sc), Ht * (i + 1)), cv2.FONT_HERSHEY_DUPLEX,
+                    1.0 * sc, txt_color_bg, 2, cv2.LINE_AA)
+        cv2.putText(out, t, (int(8 * sc), Ht * (i + 1)), cv2.FONT_HERSHEY_DUPLEX,
+                    1.0 * sc, txt_color_fg, 1, cv2.LINE_AA)
 
     # Small text.
     Ht = int(18 * sc)  # text height
     for i, t in enumerate(reversed(small_text)):
-        cv2.putText(out, t, (int(8*sc), int(H-Ht*(i+.6))), cv2.FONT_HERSHEY_DUPLEX,
-                    0.5*sc, txt_color_bg, 2, cv2.LINE_AA)
-        cv2.putText(out, t, (int(8*sc), int(H-Ht*(i+.6))), cv2.FONT_HERSHEY_DUPLEX,
-                    0.5*sc, txt_color_fg, 1, cv2.LINE_AA)
+        cv2.putText(out, t, (int(8 * sc), int(H - Ht * (i + .6))), cv2.FONT_HERSHEY_DUPLEX,
+                    0.5 * sc, txt_color_bg, 2, cv2.LINE_AA)
+        cv2.putText(out, t, (int(8 * sc), int(H - Ht * (i + .6))), cv2.FONT_HERSHEY_DUPLEX,
+                    0.5 * sc, txt_color_fg, 1, cv2.LINE_AA)
 
     if path is not None:
         cv2.imwrite(str(path), out)
@@ -552,4 +644,4 @@ def make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0,
 
 def error_colormap(x):
     return np.clip(
-        np.stack([2-x*2, x*2, np.zeros_like(x), np.ones_like(x)], -1), 0, 1)
+        np.stack([2 - x * 2, x * 2, np.zeros_like(x), np.ones_like(x)], -1), 0, 1)
