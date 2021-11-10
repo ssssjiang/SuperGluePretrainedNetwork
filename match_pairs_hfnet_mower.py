@@ -240,7 +240,7 @@ if __name__ == '__main__':
             correct = epi_errs < 5e-4
             num_correct = np.sum(correct)
             precision = np.mean(correct) if len(correct) > 0 else 0
-            matching_score = num_correct / min(len(kpts0), len(kpts0)) if min(len(kpts0), len(kpts0)) > 0 else 0
+            matching_score = num_correct / min(len(kpts0), len(kpts1)) if min(len(kpts0), len(kpts1)) > 0 else 0
 
             thresh = 1.  # In pixels relative to resized image size.
             ret = estimate_pose(mkpts0, mkpts1, K0, K1, thresh, D0=D0, D1=D1)

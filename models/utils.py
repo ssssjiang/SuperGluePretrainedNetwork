@@ -52,6 +52,8 @@ import cv2
 import torch
 import matplotlib.pyplot as plt
 import matplotlib
+import pydegensac
+from copy import deepcopy
 
 matplotlib.use('Agg')
 
@@ -261,6 +263,7 @@ def process_resize(w, h, resize):
 
     return w_new, h_new
 
+
 def process_crop(image_raw, w, h, crop):
     if len(crop) == 1 or crop is None:
         return image_raw, w, h
@@ -272,6 +275,7 @@ def process_crop(image_raw, w, h, crop):
     # cv2.Mat slip
     cropped_image = image_raw[crop[1]: crop[1] + crop[3], crop[0]: crop[0] + crop[2]]
     return cropped_image, w_crop, h_crop
+
 
 def frame2tensor(frame, device):
     return torch.from_numpy(frame / 255.).float()[None, None].to(device)
@@ -298,6 +302,7 @@ def read_image(path, device, resize, rotation, resize_float):
     inp = frame2tensor(image, device)
     return image, inp, scales
 
+
 def read_image2(path, device, rotation, crop):
     image_raw = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     if image_raw is None:
@@ -310,6 +315,7 @@ def read_image2(path, device, rotation, crop):
 
     inp = frame2tensor(image, device)
     return image_raw, inp
+
 
 # --- GEOMETRY ---
 
@@ -366,6 +372,26 @@ def do_ds_undistort(distort_kpts, D):
         kpt[0] = p0 / p2
         kpt[1] = p1 / p2
     return kpts
+
+
+def Loransac(kpts0, kpts1, K0, K1, th, n_iter, D0=None, D1=None):
+    if len(kpts0) < 5:
+        return None
+
+    f_mean = np.mean([K0[0, 0], K1[1, 1], K0[0, 0], K1[1, 1]])
+    norm_thresh = th / f_mean
+
+    kpts0 = (kpts0 - K0[[0, 1], [2, 2]][None]) / K0[[0, 1], [0, 1]][None]
+    kpts1 = (kpts1 - K1[[0, 1], [2, 2]][None]) / K1[[0, 1], [0, 1]][None]
+
+    if D0 is not None and D1 is not None:
+        kpts0 = do_ds_undistort(kpts0, D0)
+        kpts1 = do_ds_undistort(kpts1, D1)
+
+    F, mask = pydegensac.findFundamentalMatrix(kpts0, kpts1, norm_thresh, 0.999, n_iter, enable_degeneracy_check=True)
+    print('pydegensac found {} inliers'.format(int(deepcopy(mask).astype(np.float32).sum())))
+
+    return mask
 
 
 # do undistort
@@ -441,7 +467,7 @@ def to_homogeneous(points):
     return np.concatenate([points, np.ones_like(points[:, :1])], axis=-1)
 
 
-def compute_epipolar_error(kpts0, kpts1, T_0to1, K0, K1, D0 = None, D1 = None):
+def compute_epipolar_error(kpts0, kpts1, T_0to1, K0, K1, D0=None, D1=None):
     kpts0 = (kpts0 - K0[[0, 1], [2, 2]][None]) / K0[[0, 1], [0, 1]][None]
     kpts1 = (kpts1 - K1[[0, 1], [2, 2]][None]) / K1[[0, 1], [0, 1]][None]
     if D0 is None or D1 is None:

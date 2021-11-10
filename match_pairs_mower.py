@@ -6,7 +6,6 @@ import random
 import numpy as np
 import matplotlib.cm as cm
 import torch
-import pydegensac
 from copy import deepcopy
 
 from models.matching import Matching
@@ -14,7 +13,7 @@ from models.utils import (quaternion_matrix, compute_pose_error, compute_epipola
                           estimate_pose, make_matching_plot,
                           error_colormap, AverageTimer, pose_auc, read_image2,
                           rotate_intrinsics, rotate_pose_inplane,
-                          scale_intrinsics)
+                          scale_intrinsics, Loransac)
 
 torch.set_grad_enabled(False)
 
@@ -265,15 +264,6 @@ if __name__ == '__main__':
         raw_mkpts1 = kpts1[matches[valid]]
         raw_mconf = conf[valid]
 
-        # LORANSAC
-        th = 2.0
-        n_iter = 20000
-        F, mask = pydegensac.findFundamentalMatrix(raw_mkpts0, raw_mkpts1, th, 0.999, n_iter, enable_degeneracy_check= True)
-        print ('pydegensac found {} inliers'.format(int(deepcopy(mask).astype(np.float32).sum())))
-        mkpts0 = raw_mkpts0[mask]
-        mkpts1 = raw_mkpts1[mask]
-        mconf = raw_mconf[mask]
-
         if do_eval:
             # Estimate the pose and compute the pose error.
             assert len(pair) == 21, 'Pair does not have ground truth info'
@@ -301,12 +291,19 @@ if __name__ == '__main__':
             # K0 = scale_intrinsics(K0, scales0)
             # K1 = scale_intrinsics(K1, scales1)
 
+            # LORANSAC
+            th = 2.0
+            n_iter = 20000
+            mask = Loransac(deepcopy(raw_mkpts0), deepcopy(raw_mkpts1), K0, K1, th, n_iter, D0, D1)
+            mkpts0 = raw_mkpts0[mask]
+            mkpts1 = raw_mkpts1[mask]
+            mconf = raw_mconf[mask]
             epi_errs = compute_epipolar_error(mkpts0, mkpts1, T_0to1, K0, K1, D0, D1)
 
             correct = epi_errs < 5e-4
             num_correct = np.sum(correct)
             precision = np.mean(correct) if len(correct) > 0 else 0
-            matching_score = num_correct / min(len(kpts0), len(kpts0)) if min(len(kpts0), len(kpts0)) > 0 else 0
+            matching_score = num_correct / min(len(kpts0), len(kpts1)) if min(len(kpts0), len(kpts1)) > 0 else 0
 
             thresh = 1.  # In pixels relative to resized image size.
             ret = estimate_pose(mkpts0, mkpts1, K0, K1, thresh, D0=D0, D1=D1)
@@ -327,7 +324,7 @@ if __name__ == '__main__':
             timer.update('eval')
 
         # Reduce visualize image data.
-        if do_viz and i % (opt.step_size * 2) == 0:
+        if do_viz and i % (opt.step_size * 4) == 0:
             # Visualize the matches.
             color = cm.jet(mconf)
             text = [
@@ -352,7 +349,7 @@ if __name__ == '__main__':
 
             timer.update('viz_match')
 
-        if do_viz_eval and i % (opt.step_size * 2) == 0:
+        if do_viz_eval and i % (opt.step_size * 4) == 0:
             # Visualize the evaluation results for the image pair.
             color = np.clip((epi_errs - 0) / (1e-3 - 0), 0, 1)
             color = error_colormap(1 - color)
