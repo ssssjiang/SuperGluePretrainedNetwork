@@ -23,13 +23,13 @@ if __name__ == '__main__':
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument(
-        '--input_pairs', type=str, default='assets/mower_pairs_with_gt_sample.txt',
+        '--input_pairs', type=str, default='assets/mower_pairs_with_gt.txt',
         help='Path to the list of image pairs')
     parser.add_argument(
         '--input_dir', type=str, default='assets/map/',
         help='Path to the directory that contains the images')
     parser.add_argument(
-        '--output_dir', type=str, default='dump_match_pairs/mower_1040_450_sample/',
+        '--output_dir', type=str, default='/persist_dataset/SuperGlue_result/mower_800_360/',
         help='Path to the directory in which the .npz results and optionally,'
              'the visualization images are written')
 
@@ -45,7 +45,7 @@ if __name__ == '__main__':
         '--resize_float', action='store_true',
         help='Resize the image after casting uint8 to float')
     parser.add_argument(
-        '--crop_size', type=int, nargs='+', default=[120, 0, 1040, 450],
+        '--crop_size', type=int, nargs='+', default=[240, 0, 800, 360],
         help="offset_x, offset_y, width, height, if -1, do not crop")
     parser.add_argument(
         '--superglue', choices={'indoor', 'outdoor'}, default='outdoor',
@@ -58,14 +58,14 @@ if __name__ == '__main__':
         '--keypoint_threshold', type=float, default=0.005,
         help='SuperPoint keypoint detector confidence threshold')
     parser.add_argument(
-        '--nms_radius', type=int, default=4,
+        '--nms_radius', type=int, default=3,
         help='SuperPoint Non Maximum Suppression (NMS) radius'
              ' (Must be positive)')
     parser.add_argument(
-        '--sinkhorn_iterations', type=int, default=20,
+        '--sinkhorn_iterations', type=int, default=50,
         help='Number of Sinkhorn iterations performed by SuperGlue')
     parser.add_argument(
-        '--match_threshold', type=float, default=0.3,
+        '--match_threshold', type=float, default=0.2,
         help='SuperGlue match threshold')
 
     parser.add_argument(
@@ -96,6 +96,9 @@ if __name__ == '__main__':
     parser.add_argument(
         '--force_cpu', action='store_true',
         help='Force pytorch to run in CPU mode.')
+    parser.add_argument(
+        '--loransac', action='store_true',
+        help='loransac.')
     parser.add_argument(
         '--step_size', type=int, default=1,
         help='Set the step size of the pair to reduce the amount of '
@@ -145,7 +148,7 @@ if __name__ == '__main__':
                 'File \"{}\" needs 38 valid entries per row'.format(opt.input_pairs))
 
     # Load the SuperPoint and SuperGlue models.
-    device = 'cuda' if torch.cuda.is_available() and not opt.force_cpu else 'cpu'
+    device = 'cuda:2' if torch.cuda.is_available() and not opt.force_cpu else 'cpu'
     print('Running inference on device \"{}\"'.format(device))
     config = {
         'superpoint': {
@@ -159,6 +162,7 @@ if __name__ == '__main__':
             'match_threshold': opt.match_threshold,
         }
     }
+    # for debug
     matching = Matching(config).eval().to(device)
 
     # Create the output directories if they do not exist already.
@@ -166,18 +170,22 @@ if __name__ == '__main__':
     print('Looking for data in directory \"{}\"'.format(input_dir))
     dump_dir = Path(opt.output_dir)
     dump_dir.mkdir(exist_ok=True, parents=True)
-    output_dir = Path.joinpath(dump_dir, "data")
-    output_dir.mkdir(exist_ok=True, parents=True)
+    output_matches_dir = Path.joinpath(dump_dir, "data", "matches")
+    output_matches_dir.mkdir(exist_ok=True, parents=True)
+    print('Will write matches to directory \"{}\"'.format(output_matches_dir))
+    output_evals_dir = Path.joinpath(dump_dir, "data", "evals")
+    output_evals_dir.mkdir(exist_ok=True, parents=True)
     vis_dir = Path.joinpath(dump_dir, "vis")
     vis_dir.mkdir(exist_ok=True, parents=True)
-    print('Will write matches to directory \"{}\"'.format(output_dir))
     if opt.eval:
         print('Will write evaluation results',
-              'to directory \"{}\"'.format(output_dir))
+              'to directory \"{}\"'.format(output_evals_dir))
     if opt.viz:
         print('Will write visualization images to',
               'directory \"{}\"'.format(vis_dir))
 
+    # statistics average keypoints num
+    all_kpts_num = 0
     timer = AverageTimer(newline=True)
     for i, pair in enumerate(pairs):
         # Reduce test image-pairs.
@@ -185,8 +193,8 @@ if __name__ == '__main__':
             continue
         name0, name1 = pair[:2]
         stem0, stem1 = Path(name0).stem, Path(name1).stem
-        matches_path = output_dir / '{}_{}_matches.npz'.format(stem0, stem1)
-        eval_path = output_dir / '{}_{}_evaluation.npz'.format(stem0, stem1)
+        matches_path = output_matches_dir / '{}_{}_matches.npz'.format(stem0, stem1)
+        eval_path = output_evals_dir / '{}_{}_evaluation.npz'.format(stem0, stem1)
         viz_path = vis_dir / '{}_{}_matches.{}'.format(stem0, stem1, opt.viz_extension)
         viz_eval_path = vis_dir / \
                         '{}_{}_evaluation.{}'.format(stem0, stem1, opt.viz_extension)
@@ -207,6 +215,7 @@ if __name__ == '__main__':
 
                 kpts0, kpts1 = results['keypoints0'], results['keypoints1']
                 matches, conf = results['matches'], results['match_confidence']
+                all_kpts_num = ((kpts0.shape(0) + kpts1.shape(0)) // 2) + all_kpts_num
                 do_match = False
             if opt.eval and eval_path.exists():
                 try:
@@ -253,6 +262,8 @@ if __name__ == '__main__':
             matches, conf = pred['matches0'], pred['matching_scores0']
             timer.update('matcher')
 
+            all_kpts_num = ((kpts0.shape(0) + kpts1.shape(0)) // 2) + all_kpts_num
+
             # Write the matches to disk.
             out_matches = {'keypoints0': kpts0, 'keypoints1': kpts1,
                            'matches': matches, 'match_confidence': conf}
@@ -260,9 +271,9 @@ if __name__ == '__main__':
 
         # Keep the matching keypoints.
         valid = matches > -1
-        raw_mkpts0 = kpts0[valid]
-        raw_mkpts1 = kpts1[matches[valid]]
-        raw_mconf = conf[valid]
+        mkpts0 = kpts0[valid]
+        mkpts1 = kpts1[matches[valid]]
+        mconf = conf[valid]
 
         if do_eval:
             # Estimate the pose and compute the pose error.
@@ -291,13 +302,16 @@ if __name__ == '__main__':
             # K0 = scale_intrinsics(K0, scales0)
             # K1 = scale_intrinsics(K1, scales1)
 
-            # LORANSAC
-            th = 2.0
-            n_iter = 20000
-            mask = Loransac(deepcopy(raw_mkpts0), deepcopy(raw_mkpts1), K0, K1, th, n_iter, D0, D1)
-            mkpts0 = raw_mkpts0[mask]
-            mkpts1 = raw_mkpts1[mask]
-            mconf = raw_mconf[mask]
+            if opt.loransac:
+                # LORANSAC
+                th = 2.0
+                n_iter = 20000
+                mask = Loransac(deepcopy(mkpts0), deepcopy(mkpts1), K0, K1, th, n_iter, D0, D1)
+            else:
+                mask = np.ones((len(mkpts0),), dtype=bool)
+            mkpts0 = mkpts0[mask]
+            mkpts1 = mkpts1[mask]
+            mconf = mconf[mask]
             epi_errs = compute_epipolar_error(mkpts0, mkpts1, T_0to1, K0, K1, D0, D1)
 
             correct = epi_errs < 5e-4
@@ -324,7 +338,7 @@ if __name__ == '__main__':
             timer.update('eval')
 
         # Reduce visualize image data.
-        if do_viz and i % (opt.step_size * 4) == 0:
+        if do_viz and i % (opt.step_size * 16) == 0:
             # Visualize the matches.
             color = cm.jet(mconf)
             text = [
@@ -349,7 +363,7 @@ if __name__ == '__main__':
 
             timer.update('viz_match')
 
-        if do_viz_eval and i % (opt.step_size * 4) == 0:
+        if do_viz_eval and i % (opt.step_size * 16) == 0:
             # Visualize the evaluation results for the image pair.
             color = np.clip((epi_errs - 0) / (1e-3 - 0), 0, 1)
             color = error_colormap(1 - color)
@@ -394,7 +408,7 @@ if __name__ == '__main__':
 
             name0, name1 = pair[:2]
             stem0, stem1 = Path(name0).stem, Path(name1).stem
-            eval_path = output_dir / \
+            eval_path = output_evals_dir / \
                         '{}_{}_evaluation.npz'.format(stem0, stem1)
             results = np.load(eval_path)
             pose_error = np.maximum(results['error_t'], results['error_R'])
@@ -410,3 +424,4 @@ if __name__ == '__main__':
         print('AUC@5\t AUC@10\t AUC@20\t Prec\t MScore\t')
         print('{:.2f}\t {:.2f}\t {:.2f}\t {:.2f}\t {:.2f}\t'.format(
             aucs[0], aucs[1], aucs[2], prec, ms))
+        print("Average number of keypoints : {}\n".format(all_kpts_num // len(pairs)))

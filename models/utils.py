@@ -375,8 +375,9 @@ def do_ds_undistort(distort_kpts, D):
 
 
 def Loransac(kpts0, kpts1, K0, K1, th, n_iter, D0=None, D1=None):
-    if len(kpts0) < 5:
-        return None
+    if len(kpts0) < 8:
+        mask = np.ones((len(kpts0), ), dtype=bool)
+        return mask
 
     f_mean = np.mean([K0[0, 0], K1[1, 1], K0[0, 0], K1[1, 1]])
     norm_thresh = th / f_mean

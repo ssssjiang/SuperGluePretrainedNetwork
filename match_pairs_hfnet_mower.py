@@ -101,25 +101,29 @@ if __name__ == '__main__':
     print('Looking for data in directory \"{}\"'.format(input_dir))
     dump_dir = Path(opt.output_dir)
     dump_dir.mkdir(exist_ok=True, parents=True)
-    output_dir = Path.joinpath(dump_dir, "data")
-    output_dir.mkdir(exist_ok=True, parents=True)
-    vis_dir = Path.joinpath(dump_dir, "vis")
-    vis_dir.mkdir(exist_ok=True, parents=True)
-    print('Will write matches to directory \"{}\"'.format(output_dir))
+    output_matches_dir = Path.joinpath(dump_dir, "data", "matches")
+    output_matches_dir.mkdir(exist_ok=True, parents=True)
+    print('Will write matches to directory \"{}\"'.format(output_matches_dir))
     if opt.eval:
+        output_evals_dir = Path.joinpath(dump_dir, "data", "evals")
+        output_evals_dir.mkdir(exist_ok=True, parents=True)
         print('Will write evaluation results',
-              'to directory \"{}\"'.format(output_dir))
+              'to directory \"{}\"'.format(output_evals_dir))
     if opt.viz:
+        vis_dir = Path.joinpath(dump_dir, "vis")
+        vis_dir.mkdir(exist_ok=True, parents=True)
         print('Will write visualization images to',
               'directory \"{}\"'.format(vis_dir))
 
     # Load hfnet.db and hypermap.db
     hypermap_database = opt.database + "hypermap.db"
-    hfnet_database = opt.database + "hfnet.db"
+    # hfnet_database = opt.database + "hfnet.db"
 
     hypermap_cursor = HyperMapDatabase.connect(hypermap_database)
-    hfnet_cursor = HFNetDatabase.connect(hfnet_database)
+    # hfnet_cursor = HFNetDatabase.connect(hfnet_database)
 
+    # statistics average keypoints num
+    all_kpts_num = 0
     timer = AverageTimer(newline=True)
     for i, pair in enumerate(pairs):
         # Reduce test image-pairs.
@@ -127,8 +131,8 @@ if __name__ == '__main__':
             continue
         name0, name1 = pair[:2]
         stem0, stem1 = Path(name0).stem, Path(name1).stem
-        matches_path = output_dir / '{}_{}_matches.npz'.format(stem0, stem1)
-        eval_path = output_dir / '{}_{}_evaluation.npz'.format(stem0, stem1)
+        matches_path = output_matches_dir / '{}_{}_matches.npz'.format(stem0, stem1)
+        eval_path = output_evals_dir / '{}_{}_evaluation.npz'.format(stem0, stem1)
         viz_path = vis_dir / '{}_{}_matches.{}'.format(stem0, stem1, opt.viz_extension)
         viz_eval_path = vis_dir / \
                         '{}_{}_evaluation.{}'.format(stem0, stem1, opt.viz_extension)
@@ -149,6 +153,7 @@ if __name__ == '__main__':
 
                 kpts0, kpts1 = results['keypoints0'], results['keypoints1']
                 matches = results['matches']
+                all_kpts_num = ((kpts0.shape(0) + kpts1.shape(0)) // 2) + all_kpts_num
                 do_match = False
             if opt.eval and eval_path.exists():
                 try:
@@ -197,6 +202,7 @@ if __name__ == '__main__':
                     matches[match[0]] = match[1]
             timer.update('matcher')
 
+            all_kpts_num = ((kpts0.shape(0) + kpts1.shape(0)) // 2) + all_kpts_num
             # Write the matches to disk.
             out_matches = {'keypoints0': kpts0, 'keypoints1': kpts1,
                            'matches': matches}
@@ -323,7 +329,7 @@ if __name__ == '__main__':
 
             name0, name1 = pair[:2]
             stem0, stem1 = Path(name0).stem, Path(name1).stem
-            eval_path = output_dir / \
+            eval_path = output_evals_dir / \
                         '{}_{}_evaluation.npz'.format(stem0, stem1)
             results = np.load(eval_path)
             pose_error = np.maximum(results['error_t'], results['error_R'])
@@ -339,3 +345,4 @@ if __name__ == '__main__':
         print('AUC@5\t AUC@10\t AUC@20\t Prec\t MScore\t')
         print('{:.2f}\t {:.2f}\t {:.2f}\t {:.2f}\t {:.2f}\t'.format(
             aucs[0], aucs[1], aucs[2], prec, ms))
+        print("Average number of keypoints : {}\n".format(all_kpts_num // len(pairs)))
