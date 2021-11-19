@@ -29,7 +29,7 @@ if __name__ == '__main__':
         '--input_dir', type=str, default='assets/map/',
         help='Path to the directory that contains the images')
     parser.add_argument(
-        '--output_dir', type=str, default='/persist_dataset/SuperGlue_result/mower_800_360/',
+        '--output_dir', type=str, default='/persist_dataset/SuperGlue_result/mower_800_360_1024/',
         help='Path to the directory in which the .npz results and optionally,'
              'the visualization images are written')
 
@@ -185,7 +185,7 @@ if __name__ == '__main__':
               'directory \"{}\"'.format(vis_dir))
 
     # statistics average keypoints num
-    all_kpts_num = 0
+    all_kpts_num = []
     timer = AverageTimer(newline=True)
     for i, pair in enumerate(pairs):
         # Reduce test image-pairs.
@@ -215,7 +215,7 @@ if __name__ == '__main__':
 
                 kpts0, kpts1 = results['keypoints0'], results['keypoints1']
                 matches, conf = results['matches'], results['match_confidence']
-                all_kpts_num = ((kpts0.shape(0) + kpts1.shape(0)) // 2) + all_kpts_num
+                all_kpts_num.append((kpts0.shape[0] + kpts1.shape[0]) // 2)
                 do_match = False
             if opt.eval and eval_path.exists():
                 try:
@@ -262,7 +262,7 @@ if __name__ == '__main__':
             matches, conf = pred['matches0'], pred['matching_scores0']
             timer.update('matcher')
 
-            all_kpts_num = ((kpts0.shape(0) + kpts1.shape(0)) // 2) + all_kpts_num
+            all_kpts_num.append((kpts0.shape[0] + kpts1.shape[0]) // 2)
 
             # Write the matches to disk.
             out_matches = {'keypoints0': kpts0, 'keypoints1': kpts1,
@@ -424,4 +424,6 @@ if __name__ == '__main__':
         print('AUC@5\t AUC@10\t AUC@20\t Prec\t MScore\t')
         print('{:.2f}\t {:.2f}\t {:.2f}\t {:.2f}\t {:.2f}\t'.format(
             aucs[0], aucs[1], aucs[2], prec, ms))
-        print("Average number of keypoints : {}\n".format(all_kpts_num // len(pairs)))
+        print("Average number of keypoints:")
+        print('Mean\t Max\t Min\t Deviation\t')
+        print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_kpts_num), np.max(all_kpts_num), np.min(all_kpts_num), np.std(all_kpts_num)))

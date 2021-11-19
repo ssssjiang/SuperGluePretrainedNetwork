@@ -28,13 +28,13 @@ if __name__ == '__main__':
         '--input_pairs', type=str, default='assets/mower_pairs_with_gt.txt',
         help='Path to the list of image pairs')
     parser.add_argument(
-        '--input_dir', type=str, default='assets/map/',
+        '--input_dir', type=str, default='/persist_dataset/mower/hfnet/sensors/records_data/map/',
         help='Path to the directory that contains the images')
     parser.add_argument(
-        '--database', type=str, default='/persist/data/',
+        '--database', type=str, default='/persist_dataset/mower/hfnet/reconstruction/',
         help='Path to the hfnet.db & hypermap.db')
     parser.add_argument(
-        '--output_dir', type=str, default='dump_match_pairs/mower_hfnet_all/',
+        '--output_dir', type=str, default='/persist_dataset/test2/mower_hfnet_1040-450-1024/',
         help='Path to the directory in which the .npz results and optionally,'
              'the visualization images are written')
 
@@ -104,14 +104,14 @@ if __name__ == '__main__':
     output_matches_dir = Path.joinpath(dump_dir, "data", "matches")
     output_matches_dir.mkdir(exist_ok=True, parents=True)
     print('Will write matches to directory \"{}\"'.format(output_matches_dir))
+    output_evals_dir = Path.joinpath(dump_dir, "data", "evals")
+    output_evals_dir.mkdir(exist_ok=True, parents=True)
+    vis_dir = Path.joinpath(dump_dir, "vis")
+    vis_dir.mkdir(exist_ok=True, parents=True)
     if opt.eval:
-        output_evals_dir = Path.joinpath(dump_dir, "data", "evals")
-        output_evals_dir.mkdir(exist_ok=True, parents=True)
         print('Will write evaluation results',
               'to directory \"{}\"'.format(output_evals_dir))
     if opt.viz:
-        vis_dir = Path.joinpath(dump_dir, "vis")
-        vis_dir.mkdir(exist_ok=True, parents=True)
         print('Will write visualization images to',
               'directory \"{}\"'.format(vis_dir))
 
@@ -123,7 +123,7 @@ if __name__ == '__main__':
     # hfnet_cursor = HFNetDatabase.connect(hfnet_database)
 
     # statistics average keypoints num
-    all_kpts_num = 0
+    all_kpts_num = []
     timer = AverageTimer(newline=True)
     for i, pair in enumerate(pairs):
         # Reduce test image-pairs.
@@ -153,7 +153,7 @@ if __name__ == '__main__':
 
                 kpts0, kpts1 = results['keypoints0'], results['keypoints1']
                 matches = results['matches']
-                all_kpts_num = ((kpts0.shape(0) + kpts1.shape(0)) // 2) + all_kpts_num
+                all_kpts_num.append((kpts0.shape[0] + kpts1.shape[0]) // 2)
                 do_match = False
             if opt.eval and eval_path.exists():
                 try:
@@ -202,7 +202,7 @@ if __name__ == '__main__':
                     matches[match[0]] = match[1]
             timer.update('matcher')
 
-            all_kpts_num = ((kpts0.shape(0) + kpts1.shape(0)) // 2) + all_kpts_num
+            all_kpts_num.append((kpts0.shape[0] + kpts1.shape[0]) // 2)
             # Write the matches to disk.
             out_matches = {'keypoints0': kpts0, 'keypoints1': kpts1,
                            'matches': matches}
@@ -345,4 +345,6 @@ if __name__ == '__main__':
         print('AUC@5\t AUC@10\t AUC@20\t Prec\t MScore\t')
         print('{:.2f}\t {:.2f}\t {:.2f}\t {:.2f}\t {:.2f}\t'.format(
             aucs[0], aucs[1], aucs[2], prec, ms))
-        print("Average number of keypoints : {}\n".format(all_kpts_num // len(pairs)))
+        print("Average number of keypoints:")
+        print('Mean\t Max\t Min\t Deviation\t')
+        print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_kpts_num), np.max(all_kpts_num), np.min(all_kpts_num), np.std(all_kpts_num)))
