@@ -8,7 +8,6 @@ import matplotlib.cm as cm
 import torch
 import cv2
 
-from models.matching import Matching
 from models.utils import (quaternion_matrix, compute_pose_error, compute_epipolar_error,
                           estimate_pose, make_matching_plot,
                           error_colormap, AverageTimer, pose_auc, read_image2,
@@ -94,7 +93,7 @@ if __name__ == '__main__':
         if not all([len(p) == 21 for p in pairs]):
             raise ValueError(
                 'All pairs should have ground truth info for evaluation.'
-                'File \"{}\" needs 38 valid entries per row'.format(opt.input_pairs))
+                'File \"{}\" needs 21 valid entries per row'.format(opt.input_pairs))
 
     # Create the output directories if they do not exist already.
     input_dir = Path(opt.input_dir)
