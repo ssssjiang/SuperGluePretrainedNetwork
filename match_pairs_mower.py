@@ -51,7 +51,7 @@ if __name__ == '__main__':
         '--superglue', choices={'indoor', 'outdoor'}, default='outdoor',
         help='SuperGlue weights')
     parser.add_argument(
-        '--max_keypoints', type=int, default=1024,
+        '--max_keypoints', type=int, default=512,
         help='Maximum number of keypoints detected by Superpoint'
              ' (\'-1\' keeps all keypoints)')
     parser.add_argument(
@@ -338,7 +338,7 @@ if __name__ == '__main__':
             timer.update('eval')
 
         # Reduce visualize image data.
-        if do_viz and i % (opt.step_size * 16) == 0:
+        if do_viz and i % (opt.step_size * 100) == 0:
             # Visualize the matches.
             color = cm.jet(mconf)
             text = [
@@ -363,7 +363,7 @@ if __name__ == '__main__':
 
             timer.update('viz_match')
 
-        if do_viz_eval and i % (opt.step_size * 16) == 0:
+        if do_viz_eval and i % (opt.step_size * 100) == 0:
             # Visualize the evaluation results for the image pair.
             color = np.clip((epi_errs - 0) / (1e-3 - 0), 0, 1)
             color = error_colormap(1 - color)

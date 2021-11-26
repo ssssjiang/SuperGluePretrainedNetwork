@@ -13,8 +13,14 @@ from models.utils import (quaternion_matrix, compute_pose_error, compute_epipola
                           error_colormap, AverageTimer, pose_auc, read_image2,
                           rotate_intrinsics, rotate_pose_inplane,
                           scale_intrinsics)
+
+# for find hloc
+import sys
+import os
+
+sys.path.insert(1, os.path.abspath(os.path.join(os.getcwd(), "../..")))
 from hloc.utils.hypermap_database import HyperMapDatabase, image_ids_to_pair_id
-from hloc.utils.hfnet_database import HFNetDatabase
+# from hloc.utils.hfnet_database import HFNetDatabase
 
 torch.set_grad_enabled(False)
 
@@ -40,7 +46,6 @@ if __name__ == '__main__':
     parser.add_argument(
         '--max_length', type=int, default=-1,
         help='Maximum number of pairs to evaluate')
-
 
     parser.add_argument(
         '--viz', action='store_true',
@@ -115,8 +120,8 @@ if __name__ == '__main__':
               'directory \"{}\"'.format(vis_dir))
 
     # Load hfnet.db and hypermap.db
-    hypermap_database = opt.database + "hypermap.db"
-    # hfnet_database = opt.database + "hfnet.db"
+    hypermap_database = str(Path(opt.database) / "hypermap.db")
+    # hfnet_database = str(Path(opt.database) / "hfnet.db")
 
     hypermap_cursor = HyperMapDatabase.connect(hypermap_database)
     # hfnet_cursor = HFNetDatabase.connect(hfnet_database)
@@ -195,7 +200,7 @@ if __name__ == '__main__':
             kpts0 = hypermap_cursor.read_keypoints_from_image_id(image0_id)[:, 0:2]
             kpts1 = hypermap_cursor.read_keypoints_from_image_id(image1_id)[:, 0:2]
 
-            matches = np.full((min(np.shape(kpts0)[0], np.shape(kpts0)[0]), ), -1)
+            matches = np.full((min(np.shape(kpts0)[0], np.shape(kpts0)[0]),), -1)
             if raw_matches is not None:
                 for match in raw_matches:
                     matches[match[0]] = match[1]
@@ -266,7 +271,7 @@ if __name__ == '__main__':
             timer.update('eval')
 
         # Reduce visualize image data.
-        if do_viz and i % (opt.step_size * 2) == 0:
+        if do_viz and i % (opt.step_size * 100) == 0:
             # Visualize the matches.
             color = cm.jet(mconf)
             text = [
@@ -287,7 +292,7 @@ if __name__ == '__main__':
 
             timer.update('viz_match')
 
-        if do_viz_eval and i % (opt.step_size * 2) == 0:
+        if do_viz_eval and i % (opt.step_size * 100) == 0:
             # Visualize the evaluation results for the image pair.
             color = np.clip((epi_errs - 0) / (1e-3 - 0), 0, 1)
             color = error_colormap(1 - color)
@@ -346,4 +351,5 @@ if __name__ == '__main__':
             aucs[0], aucs[1], aucs[2], prec, ms))
         print("Average number of keypoints:")
         print('Mean\t Max\t Min\t Deviation\t')
-        print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_kpts_num), np.max(all_kpts_num), np.min(all_kpts_num), np.std(all_kpts_num)))
+        print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_kpts_num), np.max(all_kpts_num), np.min(all_kpts_num),
+                                                   np.std(all_kpts_num)))
