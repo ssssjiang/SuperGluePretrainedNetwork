@@ -33,6 +33,7 @@ fi
 if [ "${TEST_TYPE}" == "1040-450-1024" ];then
   echo "Start test 1040-450-1024 match."
   python3 match_pairs_mower.py --eval \
+    --loransac \
     --input_pairs="${INPUT_PAIRS}" \
     --input_dir="${INPUT_DIR}" \
     --output_dir="${OUTPUT_DIR}" \
