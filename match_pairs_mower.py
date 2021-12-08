@@ -23,13 +23,16 @@ if __name__ == '__main__':
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument(
-        '--input_pairs', type=str, default='assets/mower_pairs_with_gt.txt',
+        '--input_root_dir', type=str, default='/persist_dataset/mower/B6_2021-06-30-10-45_all_2021-06-30-12-20_sweep_2021-07-14-06-10-39/',
+        help='Path to the root of datasets.')
+    parser.add_argument(
+        '--input_pairs', type=str, default='mower_pairs_800-360-512_with_gt.txt',
         help='Path to the list of image pairs')
     parser.add_argument(
-        '--input_dir', type=str, default='assets/map/',
+        '--input_dir', type=str, default='sensors/records_data/map/',
         help='Path to the directory that contains the images')
     parser.add_argument(
-        '--output_dir', type=str, default='/persist_dataset/SuperGlue_result/mower_800_360_1024/',
+        '--output_dir', type=str, default='mower_800_360_512/',
         help='Path to the directory in which the .npz results and optionally,'
              'the visualization images are written')
 
@@ -132,7 +135,7 @@ if __name__ == '__main__':
     else:
         raise ValueError('Cannot specify less than four integers for --crop')
 
-    with open(opt.input_pairs, 'r') as f:
+    with open(opt.input_root_dir + opt.input_pairs, 'r') as f:
         pairs = [l.split() for l in f.readlines()]
 
     if opt.max_length > -1:
@@ -166,9 +169,9 @@ if __name__ == '__main__':
     matching = Matching(config).eval().to(device)
 
     # Create the output directories if they do not exist already.
-    input_dir = Path(opt.input_dir)
+    input_dir = Path(opt.input_root_dir + opt.input_dir)
     print('Looking for data in directory \"{}\"'.format(input_dir))
-    dump_dir = Path(opt.output_dir)
+    dump_dir = Path(opt.input_root_dir + opt.output_dir)
     dump_dir.mkdir(exist_ok=True, parents=True)
     output_matches_dir = Path.joinpath(dump_dir, "data", "matches")
     output_matches_dir.mkdir(exist_ok=True, parents=True)
@@ -307,13 +310,14 @@ if __name__ == '__main__':
                 th = 2.0
                 n_iter = 20000
                 mask = Loransac(deepcopy(mkpts0), deepcopy(mkpts1), K0, K1, th, n_iter, D0, D1)
+                timer.update('ransac')
             else:
                 mask = np.ones((len(mkpts0),), dtype=bool)
             mkpts0 = mkpts0[mask]
             mkpts1 = mkpts1[mask]
             mconf = mconf[mask]
-            epi_errs = compute_epipolar_error(mkpts0, mkpts1, T_0to1, K0, K1, D0, D1)
 
+            epi_errs = compute_epipolar_error(mkpts0, mkpts1, T_0to1, K0, K1, D0, D1)
             correct = epi_errs < 5e-4
             num_correct = np.sum(correct)
             precision = np.mean(correct) if len(correct) > 0 else 0

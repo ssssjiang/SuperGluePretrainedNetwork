@@ -31,16 +31,19 @@ if __name__ == '__main__':
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument(
-        '--input_pairs', type=str, default='/persist_dataset/mower/a4_2021-07-23-17-14_all_2021-07-23-17-57_sweep_2021-07-29-19-27-29/Mapping/reconstruction/matches/matching_image_pairs.txt',
+        '--input_root_dir', type=str, default='/persist_dataset/mower/a4_2021-07-23-17-14_all_2021-07-23-17-57_sweep_2021-07-29-19-27-29/',
+        help='Path to the root of datasets.')
+    parser.add_argument(
+        '--input_pairs', type=str, default='Mapping/reconstruction/matches/matching_image_pairs.txt',
         help='Path to the list of image pairs')
     parser.add_argument(
-        '--input_dir', type=str, default='/persist_dataset/mower/a4_2021-07-23-17-14_all_2021-07-23-17-57_sweep_2021-07-29-19-27-29/sensors/records_data/map/',
+        '--input_dir', type=str, default='sensors/records_data/map/',
         help='Path to the directory that contains the images')
     parser.add_argument(
-        '--database', type=str, default='/persist_dataset/mower/a4_2021-07-23-17-14_all_2021-07-23-17-57_sweep_2021-07-29-19-27-29/Mapping/reconstruction/',
+        '--database', type=str, default='Mapping/reconstruction/',
         help='Path to the hfnet.db & hypermap.db')
     parser.add_argument(
-        '--output_dir', type=str, default='/persist_dataset/mower/a4_2021-07-23-17-14_all_2021-07-23-17-57_sweep_2021-07-29-19-27-29/Mapping/reconstruction/matches/',
+        '--output_dir', type=str, default='Mapping/reconstruction/ransac_matches/',
         help='Path to the directory in which the .npz results and optionally,'
              'the visualization images are written')
 
@@ -99,6 +102,9 @@ if __name__ == '__main__':
         '--step_size', type=int, default=1,
         help='Set the step size of the pair to reduce the amount of '
              'test image-pairs and visualize data.')
+    parser.add_argument(
+        '--overwrite', action='store_true',
+        help='If database exist match-pairs item, overwrite it.')
 
     opt = parser.parse_args()
     print(opt)
@@ -116,7 +122,7 @@ if __name__ == '__main__':
     else:
         raise ValueError('Cannot specify less than four integers for --crop')
 
-    with open(opt.input_pairs, 'r') as f:
+    with open(opt.input_root_dir + opt.input_pairs, 'r') as f:
         pairs = [l.split() for l in f.readlines()]
 
     if opt.max_length > -1:
@@ -139,9 +145,9 @@ if __name__ == '__main__':
     matching = PureMatching(config).eval().to(device)
 
     # Create the output directories if they do not exist already.
-    input_dir = Path(opt.input_dir)
+    input_dir = Path(opt.input_root_dir + opt.input_dir)
     print('Looking for data in directory \"{}\"'.format(input_dir))
-    dump_dir = Path(opt.output_dir)
+    dump_dir = Path(opt.input_root_dir + opt.output_dir)
     dump_dir.mkdir(exist_ok=True, parents=True)
     output_matches_dir = Path.joinpath(dump_dir, "data")
     output_matches_dir.mkdir(exist_ok=True, parents=True)
@@ -153,8 +159,8 @@ if __name__ == '__main__':
               'directory \"{}\"'.format(vis_dir))
 
     # Load hfnet.db and hypermap.db
-    hypermap_database = str(Path(opt.database) / "hypermap.db")
-    hfnet_database = str(Path(opt.database) / "hfnet.db")
+    hypermap_database = str(Path(opt.input_root_dir + opt.database) / "hypermap.db")
+    hfnet_database = str(Path(opt.input_root_dir + opt.database) / "hfnet.db")
 
     hypermap_cursor = HyperMapDatabase.connect(hypermap_database)
     hfnet_cursor = HFNetDatabase.connect(hfnet_database)
@@ -167,10 +173,11 @@ if __name__ == '__main__':
     K[0, 2] = k[2]
     K[1, 2] = k[3]
 
-    D = camera_params[4: 6].astype(float)
+    D = camera_params[0][4: 6].astype(float)
 
     # statistics average keypoints num
     all_kpts_num = []
+    all_matches_num = []
     timer = AverageTimer(newline=True)
     for i, pair in enumerate(pairs):
         # Reduce test image-pairs.
@@ -181,6 +188,8 @@ if __name__ == '__main__':
         matches_path = output_matches_dir / '{}_{}_matches.npz'.format(stem0, stem1)
         viz_path = vis_dir / '{}_{}_matches.{}'.format(stem0, stem1, opt.viz_extension)
 
+        image0_id = hypermap_cursor.read_image_id_from_name(name0)
+        image1_id = hypermap_cursor.read_image_id_from_name(name1)
 
         # Handle --cache logic.
         do_match = True
@@ -196,7 +205,16 @@ if __name__ == '__main__':
 
                 kpts0, kpts1 = results['keypoints0'], results['keypoints1']
                 matches, conf = results['matches'], results['match_confidence']
+
+                valid = matches > -1
+                db_matches = np.stack([np.where(valid)[0], matches[valid]], -1)
+                if opt.overwrite:
+                    hypermap_cursor.relpace_matches(image0_id, image1_id, db_matches)
+                else:
+                    hypermap_cursor.add_matches(image0_id, image1_id, db_matches)
+
                 all_kpts_num.append((kpts0.shape[0] + kpts1.shape[0]) // 2)
+                all_matches_num.append(np.sum(matches > -1))
                 do_match = False
             if opt.viz and viz_path.exists():
                 do_viz = False
@@ -219,10 +237,6 @@ if __name__ == '__main__':
 
         if do_match:
             # Perform the matching.
-            image0_id = hypermap_cursor.read_image_id_from_name(name0)
-            image1_id = hypermap_cursor.read_image_id_from_name(name1)
-
-
             kpts0 = hfnet_cursor.read_keypoints_from_image_name(name0)[:, :2]
             kpts1 = hfnet_cursor.read_keypoints_from_image_name(name1)[:, :2]
 
@@ -246,15 +260,14 @@ if __name__ == '__main__':
                              'descriptors0': torch.from_numpy(descriptors0.__array__()).float()[None].to(device),
                              'descriptors1': torch.from_numpy(descriptors1.__array__()).float()[None].to(device)})
             pred = {k: v[0].cpu().numpy() for k, v in pred.items()}
-
-
             matches, conf = pred['matches0'], pred['matching_scores0']
             timer.update('matcher')
 
+            all_kpts_num.append((kpts0.shape[0] + kpts1.shape[0]) // 2)
             # Write the matches to disk.
             out_matches = {'keypoints0': kpts0, 'keypoints1': kpts1,
                            'matches': matches, 'match_confidence': conf}
-            # np.savez(str(matches_path), **out_matches)
+            np.savez(str(matches_path), **out_matches)
 
             # Keep the matching keypoints.
             valid = matches > -1
@@ -262,27 +275,25 @@ if __name__ == '__main__':
             mkpts1 = kpts1[matches[valid]]
             mconf = conf[valid]
 
+            db_matches = np.stack([np.where(valid)[0], matches[valid]], -1)
+            if opt.overwrite:
+                hypermap_cursor.relpace_matches(image0_id, image1_id, db_matches)
+            else:
+                hypermap_cursor.add_matches(image0_id, image1_id, db_matches)
 
-            # np.savez(str(matches_path), **out_matches)
-
-
-            # Estimate the pose and compute inlier matches.
-            # q_0to1 = np.array(pair[14: 18]).astype(float)
-            # t_0to1 = np.array(pair[18:]).astype(float)
-            # T_0to1 = quaternion_matrix(q_0to1)
-            # T_0to1[0: 3, 3] = t_0to1
+            # only for test
             if opt.loransac:
                 # LORANSAC
                 th = 2.0
                 n_iter = 20000
                 mask = Loransac(deepcopy(mkpts0), deepcopy(mkpts1), K, K, th, n_iter, D, D)
+                timer.update('ransac')
             else:
                 mask = np.ones((len(mkpts0),), dtype=bool)
             mkpts0 = mkpts0[mask]
             mkpts1 = mkpts1[mask]
             mconf = mconf[mask]
-
-            timer.update('eval')
+            all_matches_num.append(len(mkpts0))
 
         # Reduce visualize image data.
         if do_viz and i % (opt.step_size * 10) == 0:
@@ -309,3 +320,12 @@ if __name__ == '__main__':
             timer.update('viz_match')
 
         timer.print('Finished pair {:5} of {:5}'.format(i, len(pairs)))
+
+    if opt.statistic:
+        print("Average number of keypoints:")
+        print('Mean\t Max\t Min\t Deviation\t')
+        print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_kpts_num), np.max(all_kpts_num), np.min(all_kpts_num), np.std(all_kpts_num)))
+        print("Average number of Matches:")
+        print('Mean\t Max\t Min\t Deviation\t')
+        print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_matches_num), np.max(all_matches_num), np.min(all_matches_num), np.std(all_matches_num)))
+

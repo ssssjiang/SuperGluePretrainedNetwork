@@ -30,16 +30,19 @@ if __name__ == '__main__':
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument(
-        '--input_pairs', type=str, default='assets/mower_pairs_with_gt.txt',
+        '--input_root_dir', type=str, default='/persist_dataset/mower/B6_2021-06-30-10-45_all_2021-06-30-12-20_sweep_2021-07-14-06-10-39/',
+        help='Path to the root of datasets.')
+    parser.add_argument(
+        '--input_pairs', type=str, default='mower_pairs_800-360-512_with_gt.txt',
         help='Path to the list of image pairs')
     parser.add_argument(
-        '--input_dir', type=str, default='/persist_dataset/mower/hfnet/sensors/records_data/map/',
+        '--input_dir', type=str, default='sensors/records_data/map',
         help='Path to the directory that contains the images')
     parser.add_argument(
-        '--database', type=str, default='/persist_dataset/mower/hfnet/reconstruction/',
+        '--database', type=str, default='reconstruction2/',
         help='Path to the hfnet.db & hypermap.db')
     parser.add_argument(
-        '--output_dir', type=str, default='/persist_dataset/test2/mower_hfnet_1040-450-1024/',
+        '--output_dir', type=str, default='mower_hfnet_800_360_512/',
         help='Path to the directory in which the .npz results and optionally,'
              'the visualization images are written')
 
@@ -85,7 +88,7 @@ if __name__ == '__main__':
     assert not (opt.fast_viz and not opt.viz), 'Must use --viz with --fast_viz'
     assert not (opt.fast_viz and opt.viz_extension == 'pdf'), 'Cannot use pdf extension with --fast_viz'
 
-    with open(opt.input_pairs, 'r') as f:
+    with open(opt.input_root_dir + opt.input_pairs, 'r') as f:
         pairs = [l.split() for l in f.readlines()]
 
     if opt.max_length > -1:
@@ -101,9 +104,9 @@ if __name__ == '__main__':
                 'File \"{}\" needs 21 valid entries per row'.format(opt.input_pairs))
 
     # Create the output directories if they do not exist already.
-    input_dir = Path(opt.input_dir)
+    input_dir = Path(opt.input_root_dir + opt.input_dir)
     print('Looking for data in directory \"{}\"'.format(input_dir))
-    dump_dir = Path(opt.output_dir)
+    dump_dir = Path(opt.input_root_dir + opt.output_dir)
     dump_dir.mkdir(exist_ok=True, parents=True)
     output_matches_dir = Path.joinpath(dump_dir, "data", "matches")
     output_matches_dir.mkdir(exist_ok=True, parents=True)
@@ -120,8 +123,8 @@ if __name__ == '__main__':
               'directory \"{}\"'.format(vis_dir))
 
     # Load hfnet.db and hypermap.db
-    hypermap_database = str(Path(opt.database) / "hypermap.db")
-    # hfnet_database = str(Path(opt.database) / "hfnet.db")
+    hypermap_database = str(Path(opt.input_root_dir + opt.database) / "hypermap.db")
+    # hfnet_database = str(Path(opt.input_root_dir + opt.database) / "hfnet.db")
 
     hypermap_cursor = HyperMapDatabase.connect(hypermap_database)
     # hfnet_cursor = HFNetDatabase.connect(hfnet_database)
