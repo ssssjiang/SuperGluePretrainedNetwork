@@ -24,7 +24,6 @@ from hloc.utils.hfnet_database import HFNetDatabase
 
 torch.set_grad_enabled(False)
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Image pair matching and pose evaluation with SuperGlue',
@@ -208,10 +207,14 @@ if __name__ == '__main__':
 
                 valid = matches > -1
                 db_matches = np.stack([np.where(valid)[0], matches[valid]], -1)
-                if opt.overwrite:
-                    hypermap_cursor.replace_matches(image0_id, image1_id, db_matches)
+                if len(db_matches) >= 5:
+                    if opt.overwrite:
+                        hypermap_cursor.replace_matches(image0_id, image1_id, db_matches)
+                    else:
+                        hypermap_cursor.add_matches(image0_id, image1_id, db_matches)
                 else:
-                    hypermap_cursor.add_matches(image0_id, image1_id, db_matches)
+                    print('{}-{} merely get {} feature-matches,'
+                          ' no need to add to hypermap.db.'.format(stem0, stem1, len(db_matches)))
 
                 all_kpts_num.append((kpts0.shape[0] + kpts1.shape[0]) // 2)
                 all_matches_num.append(np.sum(matches > -1))
@@ -276,10 +279,14 @@ if __name__ == '__main__':
             mconf = conf[valid]
 
             db_matches = np.stack([np.where(valid)[0], matches[valid]], -1)
-            if opt.overwrite:
-                hypermap_cursor.replace_matches(image0_id, image1_id, db_matches)
+            if (len(db_matches) >= 5):
+                if opt.overwrite:
+                    hypermap_cursor.replace_matches(image0_id, image1_id, db_matches)
+                else:
+                    hypermap_cursor.add_matches(image0_id, image1_id, db_matches)
             else:
-                hypermap_cursor.add_matches(image0_id, image1_id, db_matches)
+                print('{}-{} merely get {} feature-matches,'
+                      ' no need to add to hypermap.db.'.format(stem0, stem1, len(db_matches)))
 
             # only for test
             if opt.loransac:
@@ -328,8 +335,10 @@ if __name__ == '__main__':
     # if opt.statistic:
     print("Average number of keypoints:")
     print('Mean\t Max\t Min\t Deviation\t')
-    print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_kpts_num), np.max(all_kpts_num), np.min(all_kpts_num), np.std(all_kpts_num)))
+    print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_kpts_num), np.max(all_kpts_num), np.min(all_kpts_num),
+                                               np.std(all_kpts_num)))
     print("Average number of Matches:")
     print('Mean\t Max\t Min\t Deviation\t')
-    print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_matches_num), np.max(all_matches_num), np.min(all_matches_num), np.std(all_matches_num)))
-
+    print(
+        '{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_matches_num), np.max(all_matches_num), np.min(all_matches_num),
+                                             np.std(all_matches_num)))
