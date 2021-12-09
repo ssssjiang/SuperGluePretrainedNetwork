@@ -43,7 +43,7 @@ if __name__ == '__main__':
         '--database', type=str, default='Mapping/reconstruction/',
         help='Path to the hfnet.db & hypermap.db')
     parser.add_argument(
-        '--output_dir', type=str, default='Mapping/reconstruction/ransac_matches/',
+        '--output_dir', type=str, default='Mapping/reconstruction/matches/',
         help='Path to the directory in which the .npz results and optionally,'
              'the visualization images are written')
 
@@ -209,7 +209,7 @@ if __name__ == '__main__':
                 valid = matches > -1
                 db_matches = np.stack([np.where(valid)[0], matches[valid]], -1)
                 if opt.overwrite:
-                    hypermap_cursor.relpace_matches(image0_id, image1_id, db_matches)
+                    hypermap_cursor.replace_matches(image0_id, image1_id, db_matches)
                 else:
                     hypermap_cursor.add_matches(image0_id, image1_id, db_matches)
 
@@ -277,7 +277,7 @@ if __name__ == '__main__':
 
             db_matches = np.stack([np.where(valid)[0], matches[valid]], -1)
             if opt.overwrite:
-                hypermap_cursor.relpace_matches(image0_id, image1_id, db_matches)
+                hypermap_cursor.replace_matches(image0_id, image1_id, db_matches)
             else:
                 hypermap_cursor.add_matches(image0_id, image1_id, db_matches)
 
@@ -321,11 +321,15 @@ if __name__ == '__main__':
 
         timer.print('Finished pair {:5} of {:5}'.format(i, len(pairs)))
 
-    if opt.statistic:
-        print("Average number of keypoints:")
-        print('Mean\t Max\t Min\t Deviation\t')
-        print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_kpts_num), np.max(all_kpts_num), np.min(all_kpts_num), np.std(all_kpts_num)))
-        print("Average number of Matches:")
-        print('Mean\t Max\t Min\t Deviation\t')
-        print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_matches_num), np.max(all_matches_num), np.min(all_matches_num), np.std(all_matches_num)))
+    hfnet_cursor.close()
+    hypermap_cursor.commit()
+    hypermap_cursor.close()
+
+    # if opt.statistic:
+    print("Average number of keypoints:")
+    print('Mean\t Max\t Min\t Deviation\t')
+    print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_kpts_num), np.max(all_kpts_num), np.min(all_kpts_num), np.std(all_kpts_num)))
+    print("Average number of Matches:")
+    print('Mean\t Max\t Min\t Deviation\t')
+    print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_matches_num), np.max(all_matches_num), np.min(all_matches_num), np.std(all_matches_num)))
 
