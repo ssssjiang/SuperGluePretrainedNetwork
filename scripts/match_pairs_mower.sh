@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 INPUT_PAIRS=$1
-INPUT_DIR=$2
+INPUT_IMAGE_DIR=$2
 OUTPUT_DIR=$3
 TEST_TYPE=$4
 
@@ -11,7 +11,7 @@ if [ "${TEST_TYPE}" == "800-360-512" ];then
   python3 match_pairs_mower.py --eval \
     --input_root_dir="${INPUT_ROOT_DIR}" \
     --input_pairs="${INPUT_PAIRS}" \
-    --input_dir="${INPUT_DIR}" \
+    --input_dir="${INPUT_IMAGE_DIR}" \
     --output_dir="${OUTPUT_DIR}" \
     --max_keypoints=512 \
     --keypoint_threshold=0.005 \
@@ -24,7 +24,7 @@ if [ "${TEST_TYPE}" == "800-360-1024" ];then
   python3 match_pairs_mower.py --eval \
     --input_root_dir="${INPUT_ROOT_DIR}" \
     --input_pairs="${INPUT_PAIRS}" \
-    --input_dir="${INPUT_DIR}" \
+    --input_dir="${INPUT_IMAGE_DIR}" \
     --output_dir="${OUTPUT_DIR}" \
     --max_keypoints=1024 \
     --keypoint_threshold=0.003 \
@@ -38,7 +38,7 @@ if [ "${TEST_TYPE}" == "1040-450-1024" ];then
     --loransac \
     --input_root_dir="${INPUT_ROOT_DIR}" \
     --input_pairs="${INPUT_PAIRS}" \
-    --input_dir="${INPUT_DIR}" \
+    --input_dir="${INPUT_IMAGE_DIR}" \
     --output_dir="${OUTPUT_DIR}" \
     --max_keypoints=1024 \
     --keypoint_threshold=0.003 \
@@ -51,7 +51,7 @@ if [ "${TEST_TYPE}" == "1040-450-512" ];then
   python3 match_pairs_mower.py --eval \
     --input_root_dir="${INPUT_ROOT_DIR}" \
     --input_pairs="${INPUT_PAIRS}" \
-    --input_dir="${INPUT_DIR}" \
+    --input_dir="${INPUT_IMAGE_DIR}" \
     --output_dir="${OUTPUT_DIR}" \
     --max_keypoints=512 \
     --keypoint_threshold=0.005 \
