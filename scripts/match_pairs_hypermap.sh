@@ -11,14 +11,14 @@ OUTPUT_DIR=$5
 
 echo "Start hypermap-superglue match."
 python3 match_pairs_hypermap.py \
-  --viz --fast_viz --show_keypoints \
+  --cache --viz --fast_viz --show_keypoints \
   --input_root_dir="${INPUT_ROOT_DIR}" \
   --input_pairs="${INPUT_PAIRS}" \
   --input_dir="${INPUT_IMAGE_DIR}" \
   --output_dir="${OUTPUT_DIR}" \
   --database="${DATABASE}" \
   --sinkhorn_iterations=50 \
-  --match_threshold=0.2 \
+  --match_threshold=0.2
 #  --crop_size -1
 # --loransac
 # --overwrite

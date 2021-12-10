@@ -30,7 +30,7 @@ if __name__ == '__main__':
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument(
-        '--input_root_dir', type=str, default='/persist_dataset/mower/a4_2021-07-23-17-14_all_2021-07-23-17-57_sweep_2021-07-29-19-27-29/',
+        '--input_root_dir', type=str, default='/',
         help='Path to the root of datasets.')
     parser.add_argument(
         '--input_pairs', type=str, default='Mapping/reconstruction/matches/matching_image_pairs.txt',
