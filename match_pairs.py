@@ -121,8 +121,6 @@ if __name__ == '__main__':
         help='Perform the evaluation'
              ' (requires ground truth pose and intrinsics)')
     parser.add_argument(
-        '--use_pycolmap', action='store_true')
-    parser.add_argument(
         '--fast_viz', action='store_true',
         help='Use faster image visualization with OpenCV instead of Matplotlib')
     parser.add_argument(
@@ -328,8 +326,7 @@ if __name__ == '__main__':
             matching_score = num_correct / len(kpts0) if len(kpts0) > 0 else 0
 
             thresh = 1.  # In pixels relative to resized image size.
-            ret = estimate_pose(mkpts0, mkpts1, K0, K1, thresh, conf=mconf,
-                                do_pycolmap=opt.use_pycolmap)
+            ret = estimate_pose(mkpts0, mkpts1, K0, K1, thresh)
             if ret is None:
                 err_t, err_R = np.inf, np.inf
                 inliers = np.zeros(len(mkpts0), np.bool)
@@ -362,11 +359,11 @@ if __name__ == '__main__':
                 text.append('Rotation: {}:{}'.format(rot0, rot1))
 
             # Display extra parameter info.
-            # k_thresh = matching.superpoint.config['keypoint_threshold']
-            # m_thresh = matching.superglue.config['match_threshold']
+            k_thresh = matching.superpoint.config['keypoint_threshold']
+            m_thresh = matching.superglue.config['match_threshold']
             small_text = [
-                # 'Keypoint Threshold: {:.4f}'.format(k_thresh),
-                # 'Match Threshold: {:.2f}'.format(m_thresh),
+                'Keypoint Threshold: {:.4f}'.format(k_thresh),
+                'Match Threshold: {:.2f}'.format(m_thresh),
                 'Image Pair: {}:{}'.format(stem0, stem1),
             ]
 
@@ -396,11 +393,11 @@ if __name__ == '__main__':
                 text.append('Rotation: {}:{}'.format(rot0, rot1))
 
             # Display extra parameter info (only works with --fast_viz).
-            # k_thresh = matching.superpoint.config['keypoint_threshold']
-            # m_thresh = matching.superglue.config['match_threshold']
+            k_thresh = matching.superpoint.config['keypoint_threshold']
+            m_thresh = matching.superglue.config['match_threshold']
             small_text = [
-                # 'Keypoint Threshold: {:.4f}'.format(k_thresh),
-                # 'Match Threshold: {:.2f}'.format(m_thresh),
+                'Keypoint Threshold: {:.4f}'.format(k_thresh),
+                'Match Threshold: {:.2f}'.format(m_thresh),
                 'Image Pair: {}:{}'.format(stem0, stem1),
             ]
 
