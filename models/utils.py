@@ -142,6 +142,7 @@ class VideoStreamer:
             for j in range(1, len(image_glob)):
                 image_path = list(Path(basedir).glob(image_glob[j]))
                 self.listing = self.listing + image_path
+            # self.listing = sorted(self.listing, key=lambda x: int(str(Path(x.stem))))
             self.listing.sort()
             self.listing = self.listing[::self.skip]
             self.max_length = np.min([self.max_length, len(self.listing)])
@@ -245,11 +246,14 @@ class VideoStreamer:
 
 # --- PREPROCESSING ---
 
-def process_resize(w, h, resize):
-    assert (len(resize) > 0 and len(resize) <= 2)
+def process_resize(w, h, resize, resize_force=True):
+    assert(len(resize) > 0 and len(resize) <= 2)
     if len(resize) == 1 and resize[0] > -1:
-        scale = resize[0] / max(h, w)
-        w_new, h_new = int(round(w * scale)), int(round(h * scale))
+        if resize[0] < max(h, w) or resize_force:
+            scale = resize[0] / max(h, w)
+            w_new, h_new = int(round(w*scale)), int(round(h*scale))
+        else:
+            w_new, h_new = w, h
     elif len(resize) == 1 and resize[0] == -1:
         w_new, h_new = w, h
     else:  # len(resize) == 2:
@@ -281,18 +285,21 @@ def frame2tensor(frame, device):
     return torch.from_numpy(frame / 255.).float()[None, None].to(device)
 
 
-def read_image(path, device, resize, rotation, resize_float):
+def read_image(path, device, resize, rotation, resize_float,
+               resize_force=True, interp=cv2.INTER_LINEAR):
     image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     if image is None:
         return None, None, None
     w, h = image.shape[1], image.shape[0]
-    w_new, h_new = process_resize(w, h, resize)
+    w_new, h_new = process_resize(w, h, resize, resize_force)
     scales = (float(w) / float(w_new), float(h) / float(h_new))
 
     if resize_float:
-        image = cv2.resize(image.astype('float32'), (w_new, h_new))
+        image = cv2.resize(image.astype('float32'), (w_new, h_new),
+                           interpolation=interp)
     else:
-        image = cv2.resize(image, (w_new, h_new)).astype('float32')
+        image = cv2.resize(image, (w_new, h_new), interpolation=interp).astype(
+                'float32')
 
     if rotation != 0:
         image = np.rot90(image, k=rotation)
@@ -319,6 +326,26 @@ def read_image2(path, device, rotation, crop):
 
 # --- GEOMETRY ---
 
+def weighted_8pt(p0, p1, weights):
+    idx = np.argsort(weights)[::-1][:len(weights)//10]
+    weights = weights[idx]
+    p0 = p0[idx]
+    p1 = p1[idx]
+    X = np.stack([
+        p1[:, 0] * p0[:, 0],
+        p1[:, 0] * p0[:, 1],
+        p1[:, 0],
+        p1[:, 1] * p0[:, 0],
+        p1[:, 1] * p0[:, 1],
+        p1[:, 1],
+        p0[:, 0],
+        p0[:, 1],
+        np.ones_like(p1[:, 0])], -1)  # N x 9
+    XwX = X.T @ (X * weights[:, None])
+    s, v = np.linalg.eig(XwX)
+    e = v[:, np.argmin(s)]
+    e = e / np.linalg.norm(e)
+    return e.reshape(3, 3)
 def quaternion_matrix(quaternion):
     """Return homogeneous rotation matrix from quaternion.
 
@@ -532,11 +559,16 @@ def pose_auc(errors, thresholds):
 # --- VISUALIZATION ---
 
 
-def plot_image_pair(imgs, dpi=100, size=6, pad=.5):
+def plot_image_pair(imgs, dpi=100, size=6, pad=.5, vertical=True):
     n = len(imgs)
     assert n == 2, 'number of images must be two'
-    figsize = (size * n, size * 3 / 4) if size is not None else None
-    _, ax = plt.subplots(1, n, figsize=figsize, dpi=dpi)
+    if vertical:
+        figsize = (size, size*3/4*n) if size is not None else None
+        layout = (n, 1)
+    else:
+        figsize = (size*n, size*3/4) if size is not None else None
+        layout = (1, n)
+    _, ax = plt.subplots(*layout, figsize=figsize, dpi=dpi)
     for i in range(n):
         ax[i].imshow(imgs[i], cmap=plt.get_cmap('gray'), vmin=0, vmax=255)
         ax[i].get_yaxis().set_ticks([])
@@ -552,7 +584,7 @@ def plot_keypoints(kpts0, kpts1, color='w', ps=2):
     ax[1].scatter(kpts1[:, 0], kpts1[:, 1], c=color, s=ps)
 
 
-def plot_matches(kpts0, kpts1, color, lw=1.5, ps=4):
+def plot_matches(kpts0, kpts1, color, lw=1.5, ps=4, lalpha=1.):
     fig = plt.gcf()
     ax = fig.axes
     fig.canvas.draw()
@@ -561,18 +593,23 @@ def plot_matches(kpts0, kpts1, color, lw=1.5, ps=4):
     fkpts0 = transFigure.transform(ax[0].transData.transform(kpts0))
     fkpts1 = transFigure.transform(ax[1].transData.transform(kpts1))
 
-    fig.lines = [matplotlib.lines.Line2D(
-        (fkpts0[i, 0], fkpts1[i, 0]), (fkpts0[i, 1], fkpts1[i, 1]), zorder=1,
-        transform=fig.transFigure, c=color[i], linewidth=lw)
-        for i in range(len(kpts0))]
-    ax[0].scatter(kpts0[:, 0], kpts0[:, 1], c=color, s=ps)
-    ax[1].scatter(kpts1[:, 0], kpts1[:, 1], c=color, s=ps)
+    if lw > 0:
+        fig.lines = [matplotlib.lines.Line2D(
+            (fkpts0[i, 0], fkpts1[i, 0]), (fkpts0[i, 1], fkpts1[i, 1]),
+            zorder=1, transform=fig.transFigure, c=color[i], linewidth=lw,
+            alpha=lalpha)
+                     for i in range(len(kpts0))]
+    if ps > 0:
+        ax[0].scatter(kpts0[:, 0], kpts0[:, 1], c=color, s=ps)
+        ax[1].scatter(kpts1[:, 0], kpts1[:, 1], c=color, s=ps)
 
 
 def make_matching_plot(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
                        color, text, path, show_keypoints=False,
                        fast_viz=False, opencv_display=False,
-                       opencv_title='matches', small_text=[]):
+                       opencv_title='matches', small_text=[], lw=1.5, psm=4,
+                       lalpha=1.):
+
     if fast_viz:
         make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
                                 color, text, path, show_keypoints, 10,
@@ -583,7 +620,7 @@ def make_matching_plot(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
     if show_keypoints:
         plot_keypoints(kpts0, kpts1, color='k', ps=4)
         plot_keypoints(kpts0, kpts1, color='w', ps=2)
-    plot_matches(mkpts0, mkpts1, color)
+    plot_matches(mkpts0, mkpts1, color, lw=lw, ps=psm, lalpha=lalpha)
 
     fig = plt.gcf()
     txt_color = 'k' if image0[:100, :150].mean() > 200 else 'w'

@@ -70,6 +70,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--match_threshold', type=float, default=0.2,
         help='SuperGlue match threshold')
+    parser.add_argument(
+        '--do_nn_matching', action='store_true')
 
     parser.add_argument(
         '--viz', action='store_true',
@@ -154,6 +156,7 @@ if __name__ == '__main__':
     device = 'cuda:2' if torch.cuda.is_available() and not opt.force_cpu else 'cpu'
     print('Running inference on device \"{}\"'.format(device))
     config = {
+        'use_nn_matcher': opt.do_nn_matching,
         'superpoint': {
             'nms_radius': opt.nms_radius,
             'keypoint_threshold': opt.keypoint_threshold,
@@ -163,7 +166,11 @@ if __name__ == '__main__':
             'weights': opt.superglue,
             'sinkhorn_iterations': opt.sinkhorn_iterations,
             'match_threshold': opt.match_threshold,
-        }
+        },
+        'nn': {
+            'distance_thresh': 0.7,
+            'mutual_check': False,
+        },
     }
     # for debug
     matching = Matching(config).eval().to(device)
@@ -352,11 +359,11 @@ if __name__ == '__main__':
             ]
 
             # Display extra parameter info.
-            k_thresh = matching.superpoint.config['keypoint_threshold']
-            m_thresh = matching.superglue.config['match_threshold']
+            # k_thresh = matching.superpoint.config['keypoint_threshold']
+            # m_thresh = matching.superglue.config['match_threshold']
             small_text = [
-                'Keypoint Threshold: {:.4f}'.format(k_thresh),
-                'Match Threshold: {:.2f}'.format(m_thresh),
+                # 'Keypoint Threshold: {:.4f}'.format(k_thresh),
+                # 'Match Threshold: {:.2f}'.format(m_thresh),
                 'Image Pair: {}:{}'.format(stem0, stem1),
             ]
 
@@ -383,11 +390,11 @@ if __name__ == '__main__':
             ]
 
             # Display extra parameter info (only works with --fast_viz).
-            k_thresh = matching.superpoint.config['keypoint_threshold']
-            m_thresh = matching.superglue.config['match_threshold']
+            # k_thresh = matching.superpoint.config['keypoint_threshold']
+            # m_thresh = matching.superglue.config['match_threshold']
             small_text = [
-                'Keypoint Threshold: {:.4f}'.format(k_thresh),
-                'Match Threshold: {:.2f}'.format(m_thresh),
+                # 'Keypoint Threshold: {:.4f}'.format(k_thresh),
+                # 'Match Threshold: {:.2f}'.format(m_thresh),
                 'Image Pair: {}:{}'.format(stem0, stem1),
             ]
 
