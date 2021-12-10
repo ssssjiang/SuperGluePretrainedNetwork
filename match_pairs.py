@@ -359,11 +359,11 @@ if __name__ == '__main__':
                 text.append('Rotation: {}:{}'.format(rot0, rot1))
 
             # Display extra parameter info.
-            k_thresh = matching.superpoint.config['keypoint_threshold']
-            m_thresh = matching.superglue.config['match_threshold']
+            # k_thresh = matching.superpoint.config['keypoint_threshold']
+            # m_thresh = matching.superglue.config['match_threshold']
             small_text = [
-                'Keypoint Threshold: {:.4f}'.format(k_thresh),
-                'Match Threshold: {:.2f}'.format(m_thresh),
+                # 'Keypoint Threshold: {:.4f}'.format(k_thresh),
+                # 'Match Threshold: {:.2f}'.format(m_thresh),
                 'Image Pair: {}:{}'.format(stem0, stem1),
             ]
 
@@ -393,11 +393,11 @@ if __name__ == '__main__':
                 text.append('Rotation: {}:{}'.format(rot0, rot1))
 
             # Display extra parameter info (only works with --fast_viz).
-            k_thresh = matching.superpoint.config['keypoint_threshold']
-            m_thresh = matching.superglue.config['match_threshold']
+            # k_thresh = matching.superpoint.config['keypoint_threshold']
+            # m_thresh = matching.superglue.config['match_threshold']
             small_text = [
-                'Keypoint Threshold: {:.4f}'.format(k_thresh),
-                'Match Threshold: {:.2f}'.format(m_thresh),
+                # 'Keypoint Threshold: {:.4f}'.format(k_thresh),
+                # 'Match Threshold: {:.2f}'.format(m_thresh),
                 'Image Pair: {}:{}'.format(stem0, stem1),
             ]
 
