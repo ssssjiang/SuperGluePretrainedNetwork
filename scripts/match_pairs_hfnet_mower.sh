@@ -10,7 +10,7 @@ TEST_TYPE=$6
 
 if [ "${TEST_TYPE}" == "800-360-512" ];then
   echo "Start hfnet-test 800-360-512 match."
-  python3 match_pairs_hfnet_mower.py --eval \
+  python3 match_pairs_hfnet_mower.py --eval --cache \
     --input_root_dir="${INPUT_ROOT_DIR}" \
     --input_pairs="${INPUT_PAIRS}" \
     --input_dir="${INPUT_IMAGE_DIR}" \

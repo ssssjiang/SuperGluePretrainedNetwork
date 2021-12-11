@@ -303,7 +303,7 @@ if __name__ == '__main__':
             all_matches_num.append(len(mkpts0))
 
         # Reduce visualize image data.
-        if do_viz and i % (opt.step_size * 10) == 0:
+        if do_viz and i % (opt.step_size * 1000) == 0:
             # Visualize the matches.
             color = cm.jet(mconf)
             text = [
