@@ -54,6 +54,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 import pydegensac
 from copy import deepcopy
+from scipy.stats import circmean
 
 matplotlib.use('Agg')
 
@@ -247,11 +248,11 @@ class VideoStreamer:
 # --- PREPROCESSING ---
 
 def process_resize(w, h, resize, resize_force=True):
-    assert(len(resize) > 0 and len(resize) <= 2)
+    assert (len(resize) > 0 and len(resize) <= 2)
     if len(resize) == 1 and resize[0] > -1:
         if resize[0] < max(h, w) or resize_force:
             scale = resize[0] / max(h, w)
-            w_new, h_new = int(round(w*scale)), int(round(h*scale))
+            w_new, h_new = int(round(w * scale)), int(round(h * scale))
         else:
             w_new, h_new = w, h
     elif len(resize) == 1 and resize[0] == -1:
@@ -299,7 +300,7 @@ def read_image(path, device, resize, rotation, resize_float,
                            interpolation=interp)
     else:
         image = cv2.resize(image, (w_new, h_new), interpolation=interp).astype(
-                'float32')
+            'float32')
 
     if rotation != 0:
         image = np.rot90(image, k=rotation)
@@ -327,7 +328,7 @@ def read_image2(path, device, rotation, crop):
 # --- GEOMETRY ---
 
 def weighted_8pt(p0, p1, weights):
-    idx = np.argsort(weights)[::-1][:len(weights)//10]
+    idx = np.argsort(weights)[::-1][:len(weights) // 10]
     weights = weights[idx]
     p0 = p0[idx]
     p1 = p1[idx]
@@ -346,6 +347,8 @@ def weighted_8pt(p0, p1, weights):
     e = v[:, np.argmin(s)]
     e = e / np.linalg.norm(e)
     return e.reshape(3, 3)
+
+
 def quaternion_matrix(quaternion):
     """Return homogeneous rotation matrix from quaternion.
 
@@ -371,6 +374,33 @@ def quaternion_matrix(quaternion):
         [q[1, 2] + q[3, 0], 1.0 - q[1, 1] - q[3, 3], q[2, 3] - q[1, 0], 0.0],
         [q[1, 3] - q[2, 0], q[2, 3] + q[1, 0], 1.0 - q[1, 1] - q[2, 2], 0.0],
         [0.0, 0.0, 0.0, 1.0]])
+
+
+def quaternion_from_matrix(matrix):
+    M = np.array(matrix, dtype=np.float64, copy=False)[:3, :3]
+
+    m00 = M[0, 0]
+    m01 = M[0, 1]
+    m02 = M[0, 2]
+    m10 = M[1, 0]
+    m11 = M[1, 1]
+    m12 = M[1, 2]
+    m20 = M[2, 0]
+    m21 = M[2, 1]
+    m22 = M[2, 2]
+    # symmetric matrix K
+    K = np.array([[m00 - m11 - m22, 0.0, 0.0, 0.0],
+                  [m01 + m10, m11 - m00 - m22, 0.0, 0.0],
+                  [m02 + m20, m12 + m21, m22 - m00 - m11, 0.0],
+                  [m21 - m12, m02 - m20, m10 - m01, m00 + m11 + m22]])
+    K /= 3.0
+    # quaternion is eigenvector of K that corresponds to largest eigenvalue
+    w, V = np.linalg.eigh(K)
+    q = V[[3, 0, 1, 2], np.argmax(w)]
+
+    if q[0] < 0.0:
+        np.negative(q, q)
+    return q
 
 
 def do_ds_undistort(distort_kpts, D):
@@ -403,7 +433,7 @@ def do_ds_undistort(distort_kpts, D):
 
 def Loransac(kpts0, kpts1, K0, K1, th, n_iter, D0=None, D1=None):
     if len(kpts0) < 8:
-        mask = np.ones((len(kpts0), ), dtype=bool)
+        mask = np.ones((len(kpts0),), dtype=bool)
         return mask
 
     f_mean = np.mean([K0[0, 0], K1[1, 1], K0[0, 0], K1[1, 1]])
@@ -420,6 +450,86 @@ def Loransac(kpts0, kpts1, K0, K1, th, n_iter, D0=None, D1=None):
     print('pydegensac found {} inliers'.format(int(deepcopy(mask).astype(np.float32).sum())))
 
     return mask
+
+
+def calculate_depth(proj_matrix, point_3Ds):
+    proj_z = proj_matrix[2, :].dot(point_3Ds)
+    return proj_z * np.linalg.norm(proj_matrix[:, 2])
+
+
+def projection_center_from_matrix(proj_matrix):
+    return -proj_matrix[:, :3].T @ proj_matrix[:, 3]
+
+
+def calculate_triangulation_angles(kpts0, kpts1, R, t, mask):
+    mkpts0 = kpts0[mask]
+    mkpts1 = kpts1[mask]
+    proj_matrix0 = np.eye(4)
+    proj_matrix1 = np.eye(4)
+    proj_matrix1[:3, :3] = R
+    proj_matrix1[:3, 3] = t[:, 0]
+    min_depth = _EPS
+    max_depth = 1000 * np.linalg.norm(R.T @ t)
+
+    points_3D = cv2.triangulatePoints(proj_matrix0[:3, :], proj_matrix1[:3, :], mkpts0.T, mkpts1.T)
+    points_3D /= points_3D[3]
+    depth0 = calculate_depth(proj_matrix0, points_3D)
+    depth1 = calculate_depth(proj_matrix1, points_3D)
+    mask = (depth0 > min_depth) & (depth0 < max_depth) \
+           & (depth1 > min_depth) & (depth1 < max_depth)
+    points_3D = points_3D[:, mask]
+
+    if points_3D is None:
+        return 0.0
+
+    proj_center0 = projection_center_from_matrix(proj_matrix0)
+    proj_center1 = projection_center_from_matrix(proj_matrix1)
+
+    baseline = np.linalg.norm(proj_center0 - proj_center1) ** 2
+    rays0 = np.linalg.norm((points_3D[:3, :] - proj_center0.reshape(-1, 1)), axis=0)
+    rays1 = np.linalg.norm((points_3D[:3, :] - proj_center1.reshape(-1, 1)), axis=0)
+
+    angle = np.abs(np.arccos((rays0 ** 2 + rays1 ** 2 - baseline) / (2 * rays1 * rays0)))
+    mask = angle is not np.NAN
+    angle = angle[mask]
+
+    if angle is None:
+        return 0.0
+    else:
+        return circmean(angle)
+
+
+def MatchVerify(kpts0, kpts1, K0, K1, th, n_iter, D0=None, D1=None):
+    if len(kpts0) < 8:
+        return None, None
+
+    f_mean = np.mean([K0[0, 0], K1[1, 1], K0[0, 0], K1[1, 1]])
+    norm_thresh = th / f_mean
+
+    kpts0 = (kpts0 - K0[[0, 1], [2, 2]][None]) / K0[[0, 1], [0, 1]][None]
+    kpts1 = (kpts1 - K1[[0, 1], [2, 2]][None]) / K1[[0, 1], [0, 1]][None]
+
+    if D0 is not None and D1 is not None:
+        kpts0 = do_ds_undistort(kpts0, D0)
+        kpts1 = do_ds_undistort(kpts1, D1)
+
+    E, mask = pydegensac.findFundamentalMatrix(kpts0, kpts1, norm_thresh, 0.999, n_iter, enable_degeneracy_check=True)
+    print('pydegensac found {} inliers'.format(int(deepcopy(mask).astype(np.float32).sum())))
+
+    if E is None:
+        return None, None
+
+    best_num_inliers = 0
+    ret = None
+    for _E in np.split(E, len(E) / 3):
+        n, R, t, _ = cv2.recoverPose(
+            _E, kpts0, kpts1, np.eye(3), 1e9, mask=mask.astype(np.uint8))
+        if n > best_num_inliers:
+            best_num_inliers = n
+            ret = (quaternion_from_matrix(R), t[:, 0], mask)
+
+    tri_angle = calculate_triangulation_angles(kpts0, kpts1, R, t, mask)
+    return ret, tri_angle
 
 
 # do undistort
@@ -563,10 +673,10 @@ def plot_image_pair(imgs, dpi=100, size=6, pad=.5, vertical=True):
     n = len(imgs)
     assert n == 2, 'number of images must be two'
     if vertical:
-        figsize = (size, size*3/4*n) if size is not None else None
+        figsize = (size, size * 3 / 4 * n) if size is not None else None
         layout = (n, 1)
     else:
-        figsize = (size*n, size*3/4) if size is not None else None
+        figsize = (size * n, size * 3 / 4) if size is not None else None
         layout = (1, n)
     _, ax = plt.subplots(*layout, figsize=figsize, dpi=dpi)
     for i in range(n):
@@ -598,7 +708,7 @@ def plot_matches(kpts0, kpts1, color, lw=1.5, ps=4, lalpha=1.):
             (fkpts0[i, 0], fkpts1[i, 0]), (fkpts0[i, 1], fkpts1[i, 1]),
             zorder=1, transform=fig.transFigure, c=color[i], linewidth=lw,
             alpha=lalpha)
-                     for i in range(len(kpts0))]
+            for i in range(len(kpts0))]
     if ps > 0:
         ax[0].scatter(kpts0[:, 0], kpts0[:, 1], c=color, s=ps)
         ax[1].scatter(kpts1[:, 0], kpts1[:, 1], c=color, s=ps)
@@ -609,7 +719,6 @@ def make_matching_plot(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
                        fast_viz=False, opencv_display=False,
                        opencv_title='matches', small_text=[], lw=1.5, psm=4,
                        lalpha=1.):
-
     if fast_viz:
         make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
                                 color, text, path, show_keypoints, 10,

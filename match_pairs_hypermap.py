@@ -13,7 +13,7 @@ from models.utils import (quaternion_matrix, compute_pose_error, compute_epipola
                           estimate_pose, make_matching_plot,
                           error_colormap, AverageTimer, pose_auc, read_image2,
                           rotate_intrinsics, rotate_pose_inplane,
-                          scale_intrinsics, Loransac)
+                          scale_intrinsics, Loransac, MatchVerify)
 # for find hloc
 import sys
 import os
@@ -95,8 +95,8 @@ if __name__ == '__main__':
         '--force_cpu', action='store_true',
         help='Force pytorch to run in CPU mode.')
     parser.add_argument(
-        '--loransac', action='store_true',
-        help='loransac.')
+        '--match_verify', action='store_true',
+        help='match verify.')
     parser.add_argument(
         '--step_size', type=int, default=1,
         help='Set the step size of the pair to reduce the amount of '
@@ -193,6 +193,7 @@ if __name__ == '__main__':
         # Handle --cache logic.
         do_match = True
         do_viz = opt.viz
+        do_match_verify = opt.match_verify
         # miao
         if opt.cache:
             if matches_path.exists():
@@ -204,8 +205,12 @@ if __name__ == '__main__':
 
                 kpts0, kpts1 = results['keypoints0'], results['keypoints1']
                 matches, conf = results['matches'], results['match_confidence']
-
+                # Keep the matching keypoints.
                 valid = matches > -1
+                mkpts0 = kpts0[valid]
+                mkpts1 = kpts1[matches[valid]]
+                mconf = conf[valid]
+
                 db_matches = np.stack([np.where(valid)[0], matches[valid]], -1)
                 if len(db_matches) >= 5:
                     if opt.overwrite:
@@ -217,13 +222,15 @@ if __name__ == '__main__':
                           ' no need to add to hypermap.db.'.format(stem0, stem1, len(db_matches)))
 
                 all_kpts_num.append((kpts0.shape[0] + kpts1.shape[0]) // 2)
-                all_matches_num.append(np.sum(matches > -1))
+                # if not do_match_verify:
+                #     all_matches_num.append(len(mkpts0))
                 do_match = False
             if opt.viz and viz_path.exists():
                 do_viz = False
             timer.update('load_cache')
 
-        if not (do_match or do_viz):
+        if not (do_match or do_viz or do_match_verify):
+            all_matches_num.append(len(mkpts0))
             timer.print('Finished pair {:5} of {:5}'.format(i, len(pairs)))
             continue
 
@@ -288,19 +295,30 @@ if __name__ == '__main__':
                 print('{}-{} merely get {} feature-matches,'
                       ' no need to add to hypermap.db.'.format(stem0, stem1, len(db_matches)))
 
-            # only for test
-            if opt.loransac:
-                # LORANSAC
-                th = 2.0
-                n_iter = 20000
-                mask = Loransac(deepcopy(mkpts0), deepcopy(mkpts1), K, K, th, n_iter, D, D)
-                timer.update('ransac')
+        # only for test
+        if len(mkpts0) and opt.match_verify:
+            # LORANSAC
+            th = 2.0
+            n_iter = 20000
+            ret, tri_angle = MatchVerify(deepcopy(mkpts0), deepcopy(mkpts1), K, K, th, n_iter, D, D)
+            timer.update('ransac')
+            if ret:
+                db_geometries = np.stack([np.where(valid)[0][ret[2]], matches[valid][ret[2]]], -1)
+                if opt.overwrite:
+                    hypermap_cursor.replace_two_view_geometry(image0_id, image1_id,
+                                                              db_geometries, ret[0], ret[1], tri_angle)
+                else:
+                    hypermap_cursor.add_two_view_geometry(image0_id, image1_id, db_geometries,
+                                                          db_geometries, ret[0], ret[1], tri_angle)
+                mask = ret[2]
             else:
-                mask = np.ones((len(mkpts0),), dtype=bool)
+                mask = np.zeros((len(mkpts0),), dtype=bool)
+
             mkpts0 = mkpts0[mask]
             mkpts1 = mkpts1[mask]
             mconf = mconf[mask]
-            all_matches_num.append(len(mkpts0))
+
+        all_matches_num.append(len(mkpts0))
 
         # Reduce visualize image data.
         if do_viz and i % (opt.step_size * 1000) == 0:
