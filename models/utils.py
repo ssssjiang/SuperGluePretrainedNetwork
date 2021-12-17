@@ -55,6 +55,7 @@ import matplotlib
 import pydegensac
 from copy import deepcopy
 from scipy.stats import circmean
+import seaborn as sns
 
 matplotlib.use('Agg')
 
@@ -532,6 +533,19 @@ def MatchVerify(kpts0, kpts1, K0, K1, th, n_iter, D0=None, D1=None):
     return ret, tri_angle
 
 
+def calc_tri_angle(kpts0, kpts1, K0, K1, D0, D1, q, t):
+    kpts0 = (kpts0 - K0[[0, 1], [2, 2]][None]) / K0[[0, 1], [0, 1]][None]
+    kpts1 = (kpts1 - K1[[0, 1], [2, 2]][None]) / K1[[0, 1], [0, 1]][None]
+
+    if D0 is not None and D1 is not None:
+        kpts0 = do_ds_undistort(kpts0, D0)
+        kpts1 = do_ds_undistort(kpts1, D1)
+
+    tri_angle = calculate_triangulation_angles(kpts0, kpts1, quaternion_matrix(q)[:3, :3], t,
+                                               np.ones((len(kpts0),), dtype=bool))
+    return tri_angle
+
+
 # do undistort
 def estimate_pose(kpts0, kpts1, K0, K1, thresh, conf=0.99999, D0=None, D1=None):
     if len(kpts0) < 5:
@@ -818,3 +832,11 @@ def make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0,
 def error_colormap(x):
     return np.clip(
         np.stack([2 - x * 2, x * 2, np.zeros_like(x), np.ones_like(x)], -1), 0, 1)
+
+
+def make_distributed_plot(data, path=None):
+    sns.set_style('darkgrid', {'font.sans-serif': ['SimHei', 'Arial']})
+    sns.displot(data=np.array(data), kde=True)
+    plt.xlabel("pose-errors")
+    plt.savefig(str(path), bbox_inches='tight', pad_inches=0)
+    plt.close()

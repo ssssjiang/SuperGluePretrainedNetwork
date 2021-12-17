@@ -10,9 +10,7 @@ import cv2
 
 from models.utils import (quaternion_matrix, compute_pose_error, compute_epipolar_error,
                           estimate_pose, make_matching_plot,
-                          error_colormap, AverageTimer, pose_auc, read_image2,
-                          rotate_intrinsics, rotate_pose_inplane,
-                          scale_intrinsics)
+                          error_colormap, AverageTimer, pose_auc, make_distributed_plot)
 
 # for find hloc
 import sys
@@ -343,6 +341,7 @@ if __name__ == '__main__':
             pose_errors.append(pose_error)
             precisions.append(results['precision'])
             matching_scores.append(results['matching_score'])
+        make_distributed_plot(np.array(pose_errors), dump_dir / 'pose_errors.png')
         thresholds = [5, 10, 20]
         aucs = pose_auc(pose_errors, thresholds)
         aucs = [100. * yy for yy in aucs]

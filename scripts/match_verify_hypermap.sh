@@ -9,9 +9,9 @@ DATABASE=$4
 OUTPUT_DIR=$5
 
 
-echo "Start hypermap-superglue match."
+echo "Start hypermap-superglue match & verify."
 python3 match_pairs_hypermap.py \
-  --cache \
+  --cache --match_verify \
   --input_root_dir="${INPUT_ROOT_DIR}" \
   --input_pairs="${INPUT_PAIRS}" \
   --input_dir="${INPUT_IMAGE_DIR}" \
@@ -23,4 +23,4 @@ python3 match_pairs_hypermap.py \
 # --match_verify
 # --overwrite
 # --viz --fast_viz --show_keypoints
-echo "Finish hypermap-superglue match."
+echo "Finish hypermap-superglue match & verify."
