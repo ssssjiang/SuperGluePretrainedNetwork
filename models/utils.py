@@ -515,9 +515,10 @@ def MatchVerify(kpts0, kpts1, K0, K1, th, n_iter, D0=None, D1=None):
         kpts1 = do_ds_undistort(kpts1, D1)
 
     E, mask = pydegensac.findFundamentalMatrix(kpts0, kpts1, norm_thresh, 0.999, n_iter, enable_degeneracy_check=True)
-    print('pydegensac found {} inliers'.format(int(deepcopy(mask).astype(np.float32).sum())))
+    num_inliers = int(deepcopy(mask).astype(np.float32).sum())
+    print('pydegensac found {} inliers'.format(num_inliers))
 
-    if E is None:
+    if E is None or num_inliers == 0:
         return None, None
 
     best_num_inliers = 0
@@ -528,7 +529,6 @@ def MatchVerify(kpts0, kpts1, K0, K1, th, n_iter, D0=None, D1=None):
         if n > best_num_inliers:
             best_num_inliers = n
             ret = (quaternion_from_matrix(R), t[:, 0], mask)
-
     tri_angle = calculate_triangulation_angles(kpts0, kpts1, R, t, mask)
     return ret, tri_angle
 

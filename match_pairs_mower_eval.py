@@ -6,47 +6,50 @@ import random
 import numpy as np
 import matplotlib.cm as cm
 import torch
-import cv2
+from copy import deepcopy
+import seaborn as sns
 
+from models.matching import Matching
 from models.utils import (quaternion_matrix, compute_pose_error, compute_epipolar_error,
                           estimate_pose, make_matching_plot,
-                          error_colormap, AverageTimer, pose_auc, make_distributed_plot)
-
-# for find hloc
-import sys
-import os
-
-sys.path.insert(1, os.path.abspath(os.path.join(os.getcwd(), "../..")))
-from hloc.utils.hypermap_database import HyperMapDatabase, image_ids_to_pair_id
-# from hloc.utils.hfnet_database import HFNetDatabase
+                          error_colormap, AverageTimer, pose_auc, read_image2,
+                          Loransac, make_distributed_plot)
 
 torch.set_grad_enabled(False)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='Image pair matching and pose evaluation with hfnet',
+        description='Image pair matching and pose evaluation with SuperGlue',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument(
-        '--input_root_dir', type=str, default='/persist_dataset/mower/B6_2021-06-30-10-45_all_2021-06-30-12-20_sweep_2021-07-14-06-10-39/',
+        '--input_root_dir', type=str, default='/persist_dataset/mower/a4_2021-07-23-17-14_all_2021-07-23-17-57_sweep_2021-07-29-19-27-29/',
         help='Path to the root of datasets.')
     parser.add_argument(
-        '--input_pairs', type=str, default='mower_pairs_800-360-512_with_gt.txt',
+        '--input_pairs', type=str, default='filtered_lf_pairs_800-360-512.txt',
         help='Path to the list of image pairs')
     parser.add_argument(
-        '--input_dir', type=str, default='sensors/records_data/map',
+        '--input_dir', type=str, default='sensors/records_data/map/',
         help='Path to the directory that contains the images')
     parser.add_argument(
-        '--database', type=str, default='reconstruction2/',
-        help='Path to the hfnet.db & hypermap.db')
-    parser.add_argument(
-        '--output_dir', type=str, default='mower_hfnet_800_360_512/',
+        '--output_dir', type=str, default='test/reconstruction2/mower_sp_800_360_1024/',
         help='Path to the directory in which the .npz results and optionally,'
              'the visualization images are written')
 
     parser.add_argument(
         '--max_length', type=int, default=-1,
         help='Maximum number of pairs to evaluate')
+    parser.add_argument(
+        '--resize', type=int, nargs='+', default=[1280, 720],
+        help='Resize the input image before running inference. If two numbers, '
+             'resize to the exact dimensions, if one number, resize the max '
+             'dimension, if -1, do not resize')
+    parser.add_argument(
+        '--resize_float', action='store_true',
+        help='Resize the image after casting uint8 to float')
+    parser.add_argument(
+        '--crop_size', type=int, nargs='+', default=[240, 0, 800, 360],
+        help="offset_x, offset_y, width, height, if -1, do not crop")
 
     parser.add_argument(
         '--viz', action='store_true',
@@ -74,15 +77,12 @@ if __name__ == '__main__':
         '--shuffle', action='store_true',
         help='Shuffle ordering of pairs before processing')
     parser.add_argument(
+        '--loransac', action='store_true',
+        help='loransac.')
+    parser.add_argument(
         '--step_size', type=int, default=1,
         help='Set the step size of the pair to reduce the amount of '
              'test image-pairs and visualize data.')
-    # parser.add_argument(
-    #     '--eval_R_err', action='store_true',
-    #     help='.')
-    # parser.add_argument(
-    #     '--eval_t_err', action='store_true',
-    #     help='.')
 
     opt = parser.parse_args()
     print(opt)
@@ -91,6 +91,14 @@ if __name__ == '__main__':
     assert not (opt.opencv_display and not opt.fast_viz), 'Cannot use --opencv_display without --fast_viz'
     assert not (opt.fast_viz and not opt.viz), 'Must use --viz with --fast_viz'
     assert not (opt.fast_viz and opt.viz_extension == 'pdf'), 'Cannot use pdf extension with --fast_viz'
+
+    if len(opt.crop_size) == 4:
+        print('Will crop image : offset_x = {}, offset_y = {}, width = {}, height = {}.'.format(
+            opt.crop_size[0], opt.crop_size[1], opt.crop_size[2], opt.crop_size[3]))
+    elif len(opt.crop_size) == 1:
+        print('Will not crop images')
+    else:
+        raise ValueError('Cannot specify less than four integers for --crop')
 
     with open(opt.input_root_dir + opt.input_pairs, 'r') as f:
         pairs = [l.split() for l in f.readlines()]
@@ -126,13 +134,6 @@ if __name__ == '__main__':
         print('Will write visualization images to',
               'directory \"{}\"'.format(vis_dir))
 
-    # Load hfnet.db and hypermap.db
-    hypermap_database = str(Path(opt.input_root_dir + opt.database) / "hypermap.db")
-    # hfnet_database = str(Path(opt.input_root_dir + opt.database) / "hfnet.db")
-
-    hypermap_cursor = HyperMapDatabase.connect(hypermap_database)
-    # hfnet_cursor = HFNetDatabase.connect(hfnet_database)
-
     # statistics average keypoints num
     all_kpts_num = []
     timer = AverageTimer(newline=True)
@@ -142,6 +143,7 @@ if __name__ == '__main__':
             continue
         name0, name1 = pair[:2]
         stem0, stem1 = Path(name0).stem, Path(name1).stem
+
         matches_path = output_matches_dir / '{}_{}_matches.npz'.format(stem0, stem1)
         eval_path = output_evals_dir / '{}_{}_evaluation.npz'.format(stem0, stem1)
         viz_path = vis_dir / '{}_{}_matches.{}'.format(stem0, stem1, opt.viz_extension)
@@ -163,7 +165,7 @@ if __name__ == '__main__':
                                   matches_path)
 
                 kpts0, kpts1 = results['keypoints0'], results['keypoints1']
-                matches = results['matches']
+                matches, conf = results['matches'], results['match_confidence']
                 all_kpts_num.append((kpts0.shape[0] + kpts1.shape[0]) // 2)
                 do_match = False
             if opt.eval and eval_path.exists():
@@ -188,43 +190,21 @@ if __name__ == '__main__':
             continue
 
         # Load the image pair.
-        image0 = cv2.imread(str(input_dir / name0), cv2.IMREAD_GRAYSCALE)
-        image1 = cv2.imread(str(input_dir / name1), cv2.IMREAD_GRAYSCALE)
+        image0, inp0 = read_image2(
+            input_dir / name0, 'cpu', 0, opt.crop_size)
+        image1, inp1 = read_image2(
+            input_dir / name1, 'cpu', 0, opt.crop_size)
         if image0 is None or image1 is None:
             print('Problem reading image pair: {} {}'.format(
                 input_dir / name0, input_dir / name1))
             exit(1)
         timer.update('load_image')
 
-        if do_match:
-            # Perform the matching.
-            image0_id = hypermap_cursor.read_image_id_from_name(name0)
-            image1_id = hypermap_cursor.read_image_id_from_name(name1)
-
-            pair_id = image_ids_to_pair_id(image0_id, image1_id)
-            raw_matches = hypermap_cursor.read_matches_from_pair_id(pair_id)
-
-            kpts0 = hypermap_cursor.read_keypoints_from_image_id(image0_id)[:, 0:2]
-            kpts1 = hypermap_cursor.read_keypoints_from_image_id(image1_id)[:, 0:2]
-
-            # matches = np.full((max(np.shape(kpts0)[0], np.shape(kpts1)[0]),), -1)
-            matches = np.full((np.shape(kpts0)[0],), -1)
-            if raw_matches is not None:
-                for match in raw_matches:
-                    matches[match[0]] = match[1]
-            timer.update('matcher')
-
-            all_kpts_num.append((kpts0.shape[0] + kpts1.shape[0]) // 2)
-            # Write the matches to disk.
-            out_matches = {'keypoints0': kpts0, 'keypoints1': kpts1,
-                           'matches': matches}
-            np.savez(str(matches_path), **out_matches)
-
         # Keep the matching keypoints.
         valid = matches > -1
         mkpts0 = kpts0[valid]
         mkpts1 = kpts1[matches[valid]]
-        mconf = np.full((np.shape(mkpts0)[0],), 0.5)
+        mconf = conf[valid]
 
         if do_eval:
             # Estimate the pose and compute the pose error.
@@ -253,8 +233,19 @@ if __name__ == '__main__':
             # K0 = scale_intrinsics(K0, scales0)
             # K1 = scale_intrinsics(K1, scales1)
 
-            epi_errs = compute_epipolar_error(mkpts0, mkpts1, T_0to1, K0, K1, D0, D1)
+            if opt.loransac:
+                # LORANSAC
+                th = 2.0
+                n_iter = 20000
+                mask = Loransac(deepcopy(mkpts0), deepcopy(mkpts1), K0, K1, th, n_iter, D0, D1)
+                timer.update('ransac')
+            else:
+                mask = np.ones((len(mkpts0),), dtype=bool)
+            mkpts0 = mkpts0[mask]
+            mkpts1 = mkpts1[mask]
+            mconf = mconf[mask]
 
+            epi_errs = compute_epipolar_error(mkpts0, mkpts1, T_0to1, K0, K1, D0, D1)
             correct = epi_errs < 5e-4
             num_correct = np.sum(correct)
             precision = np.mean(correct) if len(correct) > 0 else 0
@@ -283,13 +274,17 @@ if __name__ == '__main__':
             # Visualize the matches.
             color = cm.jet(mconf)
             text = [
-                'Hfnet',
+                'SuperGlue',
                 'Keypoints: {}:{}'.format(len(kpts0), len(kpts1)),
                 'Matches: {}'.format(len(mkpts0)),
             ]
 
             # Display extra parameter info.
+            # k_thresh = matching.superpoint.config['keypoint_threshold']
+            # m_thresh = matching.superglue.config['match_threshold']
             small_text = [
+                # 'Keypoint Threshold: {:.4f}'.format(k_thresh),
+                # 'Match Threshold: {:.2f}'.format(m_thresh),
                 'Image Pair: {}:{}'.format(stem0, stem1),
             ]
 
@@ -310,13 +305,17 @@ if __name__ == '__main__':
             e_t = 'FAIL' if np.isinf(err_t) else '{:.1f}{}'.format(err_t, deg)
             e_R = 'FAIL' if np.isinf(err_R) else '{:.1f}{}'.format(err_R, deg)
             text = [
-                'Hfnet',
+                'SuperGlue',
                 '{}R: {}'.format(delta, e_R), '{}t: {}'.format(delta, e_t),
                 'inliers: {}/{}'.format(num_correct, (matches > -1).sum()),
             ]
 
             # Display extra parameter info (only works with --fast_viz).
+            # k_thresh = matching.superpoint.config['keypoint_threshold']
+            # m_thresh = matching.superglue.config['match_threshold']
             small_text = [
+                # 'Keypoint Threshold: {:.4f}'.format(k_thresh),
+                # 'Match Threshold: {:.2f}'.format(m_thresh),
                 'Image Pair: {}:{}'.format(stem0, stem1),
             ]
 
@@ -333,8 +332,6 @@ if __name__ == '__main__':
     if opt.eval:
         # Collate the results into a final table and print to terminal.
         pose_errors = []
-        R_errors = []
-        t_errors = []
         precisions = []
         matching_scores = []
         for i, pair in enumerate(pairs):
@@ -343,40 +340,24 @@ if __name__ == '__main__':
 
             name0, name1 = pair[:2]
             stem0, stem1 = Path(name0).stem, Path(name1).stem
+
             eval_path = output_evals_dir / \
                         '{}_{}_evaluation.npz'.format(stem0, stem1)
             results = np.load(eval_path)
             pose_error = np.maximum(results['error_t'], results['error_R'])
-            R_error = results['error_R']
-            t_error = results['error_t']
             pose_errors.append(pose_error)
-            R_errors.append(R_error)
-            t_errors.append(t_error)
             precisions.append(results['precision'])
             matching_scores.append(results['matching_score'])
-        # make_distributed_plot(np.array(pose_errors), dump_dir / 'pose_errors.png')
-        # make_distributed_plot(np.array(R_errors), dump_dir / 'R_errors.png')
-        # make_distributed_plot(np.array(t_errors), dump_dir / 't_errors.png')
+        make_distributed_plot(np.array(pose_errors), dump_dir / 'pose_errors.png')
         thresholds = [5, 10, 20]
         aucs = pose_auc(pose_errors, thresholds)
-        R_aucs = pose_auc(R_errors, thresholds)
-        t_aucs = pose_auc(t_errors, thresholds)
         aucs = [100. * yy for yy in aucs]
-        R_aucs = [100. * yy for yy in R_aucs]
-        t_aucs = [100. * yy for yy in t_aucs]
         prec = 100. * np.mean(precisions)
         ms = 100. * np.mean(matching_scores)
         print('Evaluation Results (mean over {} pairs):'.format(len(pairs)))
         print('AUC@5\t AUC@10\t AUC@20\t Prec\t MScore\t')
         print('{:.2f}\t {:.2f}\t {:.2f}\t {:.2f}\t {:.2f}\t'.format(
             aucs[0], aucs[1], aucs[2], prec, ms))
-        print('R_AUC@5\t R_AUC@10\t R_AUC@20\t')
-        print('{:.2f}\t {:.2f}\t {:.2f}\t'.format(
-            R_aucs[0], R_aucs[1], R_aucs[2]))
-        print('t_AUC@5\t t_AUC@10\t t_AUC@20\t')
-        print('{:.2f}\t {:.2f}\t {:.2f}\t'.format(
-            t_aucs[0], t_aucs[1], t_aucs[2]))
         print("Average number of keypoints:")
         print('Mean\t Max\t Min\t Deviation\t')
-        print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_kpts_num), np.max(all_kpts_num), np.min(all_kpts_num),
-                                                   np.std(all_kpts_num)))
+        print('{:.2f}\t {}\t {}\t {:.2f}\t'.format(np.mean(all_kpts_num), np.max(all_kpts_num), np.min(all_kpts_num), np.std(all_kpts_num)))
