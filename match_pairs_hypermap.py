@@ -1,4 +1,6 @@
 # shu.song@ninebot.com
+# get keypoints from hypermap.db, descriptors from hfnet.db, and then superglue match;
+# feature: 1. select ransac(match verify), 2.visiualize matches (no eval matches)
 
 from pathlib import Path
 import argparse

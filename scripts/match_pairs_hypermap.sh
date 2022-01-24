@@ -11,7 +11,6 @@ OUTPUT_DIR=$5
 
 echo "Start hypermap-superglue match."
 python3 match_pairs_hypermap.py \
-  --cache \
   --input_root_dir="${INPUT_ROOT_DIR}" \
   --input_pairs="${INPUT_PAIRS}" \
   --input_dir="${INPUT_IMAGE_DIR}" \
@@ -23,4 +22,5 @@ python3 match_pairs_hypermap.py \
 # --match_verify
 # --overwrite
 # --viz --fast_viz --show_keypoints
+#  --cache \
 echo "Finish hypermap-superglue match."

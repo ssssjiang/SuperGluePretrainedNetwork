@@ -1,4 +1,4 @@
-# shu.song@ninebot.com
+# mower dataset :superpoint + superglue + eval
 
 from pathlib import Path
 import argparse

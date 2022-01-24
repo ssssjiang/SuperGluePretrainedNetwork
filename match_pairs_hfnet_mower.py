@@ -1,4 +1,4 @@
-# shu.song@ninebot.com
+# hypermap data + superglue + eval(error_R & error_t)
 
 from pathlib import Path
 import argparse
@@ -18,6 +18,7 @@ import os
 
 sys.path.insert(1, os.path.abspath(os.path.join(os.getcwd(), "../..")))
 from hloc.utils.hypermap_database import HyperMapDatabase, image_ids_to_pair_id
+
 # from hloc.utils.hfnet_database import HFNetDatabase
 
 torch.set_grad_enabled(False)
@@ -354,6 +355,9 @@ if __name__ == '__main__':
             t_errors.append(t_error)
             precisions.append(results['precision'])
             matching_scores.append(results['matching_score'])
+        # save pose errors
+        output_pose_err = dump_dir / 'pose_errors.npz'
+        np.savez(str(output_pose_err), pose_errors=pose_errors, R_errors=R_errors, t_errors=t_errors)
         # make_distributed_plot(np.array(pose_errors), dump_dir / 'pose_errors.png')
         # make_distributed_plot(np.array(R_errors), dump_dir / 'R_errors.png')
         # make_distributed_plot(np.array(t_errors), dump_dir / 't_errors.png')
