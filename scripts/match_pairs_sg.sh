@@ -8,7 +8,7 @@ TEST_TYPE=$4
 
 if [ "${TEST_TYPE}" == "800-360-512" ];then
   echo "Start test 800-360-512 match."
-  python3 match_pairs_mower.py --eval \
+  python3 match_pairs_sg.py --eval \
     --input_root_dir="${INPUT_ROOT_DIR}" \
     --input_pairs="${INPUT_PAIRS}" \
     --input_dir="${INPUT_IMAGE_DIR}" \
@@ -21,7 +21,7 @@ fi
 
 if [ "${TEST_TYPE}" == "800-360-1024" ];then
   echo "Start test 800-360-1024 match."
-  python3 match_pairs_mower.py --eval \
+  python3 match_pairs_sg.py --eval \
     --input_root_dir="${INPUT_ROOT_DIR}" \
     --input_pairs="${INPUT_PAIRS}" \
     --input_dir="${INPUT_IMAGE_DIR}" \
@@ -34,7 +34,7 @@ fi
 
 if [ "${TEST_TYPE}" == "1040-450-1024" ];then
   echo "Start test 1040-450-1024 match."
-  python3 match_pairs_mower.py --eval \
+  python3 match_pairs_sg.py --eval \
     --loransac \
     --input_root_dir="${INPUT_ROOT_DIR}" \
     --input_pairs="${INPUT_PAIRS}" \
@@ -48,7 +48,7 @@ fi
 
 if [ "${TEST_TYPE}" == "1040-450-512" ];then
   echo "Start test 1040-450-512 match."
-  python3 match_pairs_mower.py --eval \
+  python3 match_pairs_sg.py --eval \
     --input_root_dir="${INPUT_ROOT_DIR}" \
     --input_pairs="${INPUT_PAIRS}" \
     --input_dir="${INPUT_IMAGE_DIR}" \
