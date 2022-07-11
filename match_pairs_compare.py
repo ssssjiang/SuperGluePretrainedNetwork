@@ -28,19 +28,19 @@ if __name__ == '__main__':
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument(
-        '--input_root_dir', type=str, default='/persist_dataset/mower/B6_2021-06-30-10-45_all_2021-06-30-12-20_sweep_2021-07-14-06-10-39/',
+        '--input_root_dir', type=str, default='/persist_dataset/TUM/*/',
         help='Path to the root of datasets.')
     parser.add_argument(
-        '--input_pairs', type=str, default='test/reconstruction2/model/mis_match_feature_pairs.txt',
+        '--input_pairs', type=str, default='reconstruction/matches_with_gt.txt',
         help='Path to the list of image pairs')
     parser.add_argument(
         '--input_dir', type=str, default='sensors/records_data/map',
         help='Path to the directory that contains the images')
     parser.add_argument(
-        '--database', type=str, default='test/reconstruction2/',
+        '--database', type=str, default='reconstruction/',
         help='Path to the hfnet.db & hypermap.db')
     parser.add_argument(
-        '--output_dir', type=str, default='test/reconstruction2/filtered/',
+        '--output_dir', type=str, default='reconstruction/*/',
         help='Path to the directory in which the .npz results and optionally,'
              'the visualization images are written')
 
@@ -102,10 +102,11 @@ if __name__ == '__main__':
         random.Random(0).shuffle(pairs)
 
     if opt.eval:
-        if not all([len(p) == 21 for p in pairs]):
+        # for no distortion, if ds mdoel:21
+        if not all([len(p) == 17 for p in pairs]):
             raise ValueError(
                 'All pairs should have ground truth info for evaluation.'
-                'File \"{}\" needs 21 valid entries per row'.format(opt.input_pairs))
+                'File \"{}\" needs 17 valid entries per row'.format(opt.input_pairs))
 
     # Create the output directories if they do not exist already.
     input_dir = Path(opt.input_root_dir + opt.input_dir)
@@ -119,7 +120,8 @@ if __name__ == '__main__':
     print('Will write matches to directory \"{}\"'.format(output_matches_dir))
     output_evals_dir = Path.joinpath(dump_dir, "data", "evals")
     output_evals_dir.mkdir(exist_ok=True, parents=True)
-    vis_dir = Path.joinpath(dump_dir, "vis_mis_feature_pairs")
+    # Set output folder.
+    vis_dir = Path.joinpath(dump_dir, "vis_odom_filter")
     vis_dir.mkdir(exist_ok=True, parents=True)
     if opt.eval:
         print('Will write evaluation results',
@@ -129,9 +131,9 @@ if __name__ == '__main__':
               'directory \"{}\"'.format(vis_dir))
 
     # Load hfnet.db and hypermap.db
-    hypermap_database0 = str(Path(opt.input_root_dir + opt.database) / "bak/hypermap-E.db")
+    hypermap_database0 = str(Path(opt.input_root_dir + opt.database) / "hypermap.db_unrefined")
     # hfnet_database = str(Path(opt.input_root_dir + opt.database) / "hfnet.db")
-    hypermap_database1 = str(Path(opt.input_root_dir + opt.database) / "hypermap.db")
+    hypermap_database1 = str(Path(opt.input_root_dir + opt.database) / "hypermap.db_refined")
 
     hypermap_cursor0 = HyperMapDatabase.connect(hypermap_database0)
     hypermap_cursor1 = HyperMapDatabase.connect(hypermap_database1)
@@ -151,6 +153,7 @@ if __name__ == '__main__':
         sfm_viz_path = vis_dir / '{}_{}_sfm_filter_matches.{}'.format(stem0, stem1, opt.viz_extension)
         # Handle --cache logic.
         do_match = True
+        do_eval = opt.eval
         do_viz = opt.viz
 
         # Load the image pair.
@@ -171,8 +174,24 @@ if __name__ == '__main__':
             raw_matches = hypermap_cursor0.read_matches_from_pair_id(pair_id)
             filter_matches = hypermap_cursor1.read_matches_from_pair_id(pair_id)
 
+            if raw_matches is None:
+                continue
+
+            if filter_matches is not None and len(raw_matches) == len(filter_matches):
+                continue
+
             kpts0 = hypermap_cursor0.read_keypoints_from_image_id(image0_id)[:, 0:2]
             kpts1 = hypermap_cursor0.read_keypoints_from_image_id(image1_id)[:, 0:2]
+
+            q = hypermap_cursor1.read_q_from_pair_id(pair_id)
+            t = hypermap_cursor1.read_t_from_pair_id(pair_id)
+            config = hypermap_cursor1.read_config_from_pair_id(pair_id)
+            if q is not None and t is not None:
+                R = quaternion_matrix(q)[:3, :3]
+                t = t[:, 0]
+            else:
+                R = None
+                t = None
 
             # matches = np.full((max(np.shape(kpts0)[0], np.shape(kpts1)[0]),), -1)
             matches0 = np.full((np.shape(kpts0)[0],), -1)
@@ -186,47 +205,90 @@ if __name__ == '__main__':
             timer.update('matcher')
 
             all_kpts_num.append((kpts0.shape[0] + kpts1.shape[0]) // 2)
-            # Write the matches to disk.
-            out_matches = {'keypoints0': kpts0, 'keypoints1': kpts1,
-                           'matches_nn': matches0, 'matches_filter':matches1}
-            np.savez(str(matches_path), **out_matches)
 
         # Keep the matching keypoints.
         # valid_nn = matches0 > -1
         # valid_filter = matches1 > -1
+        valid = matches0 > -1
+        mkpts0 = kpts0[valid]
+        mkpts1 = kpts1[matches0[valid]]
+
         nn_filter = (matches0 == -1) & (matches1 > -1)
         sfm_filter = (matches0 > -1) & (matches1 == -1)
         mkpts0_nn = kpts0[nn_filter]
         mkpts1_nn = kpts1[matches1[nn_filter]]
-        mconf_nn = np.full((np.shape(mkpts0_nn)[0],), 0.1)
+        # mconf_nn = np.full((np.shape(mkpts0_nn)[0],), 0.1)
         mkpts0_sfm = kpts0[sfm_filter]
         mkpts1_sfm = kpts1[matches0[sfm_filter]]
-        mconf_sfm = np.full((np.shape(mkpts0_sfm)[0],), 0.1)
+        # mconf_sfm = np.full((np.shape(mkpts0_sfm)[0],), 0.1)
+
+        if do_eval:
+            # Estimate the pose and compute the pose error.
+            assert len(pair) == 17, 'Pair does not have ground truth info'
+            k0 = np.array(pair[2: 6]).astype(float)
+            K0 = np.zeros((3, 3)).astype(float)
+            K1 = np.zeros((3, 3)).astype(float)
+            K0[0, 0] = k0[0]
+            K0[1, 1] = k0[1]
+            K0[0, 2] = k0[2]
+            K0[1, 2] = k0[3]
+            k1 = np.array(pair[6: 10]).astype(float)
+            K1[0, 0] = k1[0]
+            K1[1, 1] = k1[1]
+            K1[0, 2] = k1[2]
+            K1[1, 2] = k1[3]
+
+            q_0to1 = np.array(pair[10: 14]).astype(float)
+            t_0to1 = np.array(pair[14:]).astype(float)
+            T_0to1 = quaternion_matrix(q_0to1)
+            T_0to1[0: 3, 3] = t_0to1
+
+            # epi_errs = compute_epipolar_error(mkpts0, mkpts1, T_0to1, K0, K1)
+            epi_errs_filter = compute_epipolar_error(mkpts0_sfm, mkpts1_sfm, T_0to1, K0, K1)
+
+            correct = epi_errs_filter < 5e-4
+            num_correct = np.sum(correct)
+
+            if R is None:
+                err_t, err_R = np.inf, np.inf
+            else:
+                err_t, err_R = compute_pose_error(T_0to1, R, t)
+
+            timer.update('eval')
 
         # Reduce visualize image data.
-        if do_viz and i % (opt.step_size * 1000) == 0:
-            # Visualize the nn filtered matches.
-            color_nn = cm.jet(mconf_nn)
-            text = [
-                'global filtered & nn pass',
-                'Keypoints: {}:{}'.format(len(kpts0), len(kpts1)),
-                'Matches: {}'.format(len(mkpts0_nn)),
-            ]
-
-            # Display extra parameter info.
-            small_text = [
-                'Image Pair: {}:{}'.format(stem0, stem1),
-            ]
-
-            make_matching_plot(
-                image0, image1, kpts0, kpts1, mkpts0_nn, mkpts1_nn, color_nn,
-                text, nn_viz_path, opt.show_keypoints,
-                opt.fast_viz, opt.opencv_display, 'Matches', small_text)
+        show_viz = err_t > 10 or err_R > 3
+        if do_viz and show_viz:
+            # # Visualize the nn filtered matches.
+            # color_nn = cm.jet(mconf_nn)
+            # text = [
+            #     'global filtered & nn pass',
+            #     'Keypoints: {}:{}'.format(len(kpts0), len(kpts1)),
+            #     'Matches: {}'.format(len(mkpts0_nn)),
+            # ]
+            #
+            # # Display extra parameter info.
+            # small_text = [
+            #     'Image Pair: {}:{}'.format(stem0, stem1),
+            # ]
+            #
+            # make_matching_plot(
+            #     image0, image1, kpts0, kpts1, mkpts0_nn, mkpts1_nn, color_nn,
+            #     text, nn_viz_path, opt.show_keypoints,
+            #     opt.fast_viz, opt.opencv_display, 'Matches', small_text)
 
             # Visualize the global sfm filtered matches.
-            color_sfm = cm.jet(mconf_sfm)
+            # Visualize the evaluation results for the image pair.
+            color_sfm = np.clip((epi_errs_filter - 0) / (1e-3 - 0), 0, 1)
+            color_sfm = error_colormap(1 - color_sfm)
+            deg, delta = ' deg', 'Delta '
+            if not opt.fast_viz:
+                deg, delta = '°', '$\\Delta$'
+            e_t = 'FAIL' if np.isinf(err_t) else '{:.1f}{}'.format(err_t, deg)
+            e_R = 'FAIL' if np.isinf(err_R) else '{:.1f}{}'.format(err_R, deg)
             text = [
-                'nn filtered & global pass',
+                'Odom filter, Config: {}'.format(config),
+                '{}R: {}'.format(delta, e_R), '{}t: {}'.format(delta, e_t),
                 'Keypoints: {}:{}'.format(len(kpts0), len(kpts1)),
                 'Matches: {}'.format(len(mkpts0_sfm)),
             ]
